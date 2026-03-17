@@ -85,6 +85,18 @@ def api_youtube(request):
         return JsonResponse({'error': 'URL is required'}, status=400)
 
     try:
+        youtube_id = YouTubeService.extract_video_id(url)
+        if youtube_id:
+            existing = Track.objects.filter(youtube_id=youtube_id).first()
+            if existing and existing.file and existing.file.storage.exists(existing.file.name):
+                return JsonResponse({
+                    'id': existing.id,
+                    'title': existing.title,
+                    'artist': existing.artist,
+                    'duration': existing.duration,
+                    'url': existing.file.url,
+                })
+
         filepath, info = YouTubeService.download_audio(url)
         rel_path = os.path.relpath(filepath, settings.MEDIA_ROOT)
 
@@ -178,4 +190,3 @@ def api_lyrics(request, track_id):
         return JsonResponse({'lyrics': None, 'error': 'No lyrics found'})
     except Exception as e:
         return JsonResponse({'lyrics': None, 'error': str(e)})
-

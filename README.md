@@ -261,7 +261,7 @@ base64 -w 0 youtube-cookies.txt
 
 Optional related environment variables:
 - `YTDLP_COOKIE_FILE`: absolute path to a cookies file (for non-container servers)
-- `YTDLP_PLAYER_CLIENTS`: comma-separated clients, default `android,web`
+- `YTDLP_PLAYER_CLIENTS`: comma-separated clients, default `auto` to let `yt-dlp` choose the best anonymous clients
 
 ### Lyrics return errors
 - Install `syncedlyrics`:
