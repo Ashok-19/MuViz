@@ -8,5 +8,8 @@ urlpatterns = [
     path('', include('visualizer.urls')),
 ]
 
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+# In serverless deployments (e.g., Vercel), static/media routing may not be
+# handled by a separate web server. Keep these URL mappings available so Django
+# can serve bundled static assets directly.
+urlpatterns += static(settings.STATIC_URL, document_root=settings.BASE_DIR / 'static')
+urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
