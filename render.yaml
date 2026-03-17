@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: muviz
+    runtime: python
+    plan: free
+    buildCommand: bash build.sh
+    startCommand: gunicorn muviz.wsgi:application --bind 0.0.0.0:$PORT --workers 2 --timeout 180
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: DJANGO_SETTINGS_MODULE
+        value: muviz.settings
+      - key: DEBUG
+        value: "False"
+      - key: ALLOWED_HOSTS
+        value: .onrender.com
+      - key: CSRF_TRUSTED_ORIGINS
+        value: https://*.onrender.com
+      - key: MEDIA_ROOT
+        value: /var/data/media
+      - key: SECRET_KEY
+        generateValue: true
+    disk:
+      name: media
+      mountPath: /var/data/media
+      sizeGB: 1
