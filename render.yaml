@@ -18,5 +18,9 @@ services:
         value: https://*.onrender.com
       - key: MEDIA_ROOT
         value: /tmp/media
+      - key: YTDLP_PLAYER_CLIENTS
+        value: android,web
+      - key: YTDLP_COOKIES_B64
+        sync: false
       - key: SECRET_KEY
         generateValue: true

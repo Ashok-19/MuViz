@@ -1,5 +1,8 @@
 import os
+import base64
+import tempfile
 import yt_dlp
+from yt_dlp.utils import DownloadError
 from django.conf import settings
 
 
@@ -7,18 +10,83 @@ class YouTubeService:
     DOWNLOAD_DIR = os.path.join(settings.MEDIA_ROOT, 'tracks')
 
     @staticmethod
+    def _resolve_cookie_file():
+        """Resolve cookie file from environment for authenticated yt-dlp requests."""
+        cookie_file = os.getenv('YTDLP_COOKIE_FILE', '').strip()
+        if cookie_file:
+            if not os.path.exists(cookie_file):
+                raise RuntimeError(f'YTDLP_COOKIE_FILE does not exist: {cookie_file}')
+            return cookie_file
+
+        cookies_b64 = os.getenv('YTDLP_COOKIES_B64', '').strip()
+        cookies_raw = os.getenv('YTDLP_COOKIES', '').strip()
+        if not cookies_b64 and not cookies_raw:
+            return None
+
+        if cookies_b64:
+            try:
+                cookies_raw = base64.b64decode(cookies_b64).decode('utf-8')
+            except Exception as exc:
+                raise RuntimeError('Invalid YTDLP_COOKIES_B64 value. Must be base64-encoded Netscape cookie text.') from exc
+
+        cookie_path = os.path.join(tempfile.gettempdir(), 'yt-dlp-cookies.txt')
+        with open(cookie_path, 'w', encoding='utf-8') as f:
+            f.write(cookies_raw)
+            if not cookies_raw.endswith('\n'):
+                f.write('\n')
+
+        os.chmod(cookie_path, 0o600)
+        return cookie_path
+
+    @staticmethod
+    def _base_ydl_opts():
+        """Build common yt-dlp options with optional production auth configuration."""
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'noplaylist': True,
+        }
+
+        player_clients = [
+            client.strip()
+            for client in os.getenv('YTDLP_PLAYER_CLIENTS', 'android,web').split(',')
+            if client.strip()
+        ]
+        if player_clients:
+            ydl_opts['extractor_args'] = {'youtube': {'player_client': player_clients}}
+
+        cookie_file = YouTubeService._resolve_cookie_file()
+        if cookie_file:
+            ydl_opts['cookiefile'] = cookie_file
+
+        return ydl_opts
+
+    @staticmethod
+    def _raise_friendly_download_error(exc):
+        message = str(exc)
+        if "Sign in to confirm you're not a bot" in message or 'Sign in to confirm you’re not a bot' in message:
+            raise RuntimeError(
+                'YouTube blocked anonymous requests from this server IP. Configure YTDLP_COOKIES_B64 '
+                '(or YTDLP_COOKIE_FILE) with exported YouTube cookies and retry.'
+            ) from exc
+        raise RuntimeError(message) from exc
+
+    @staticmethod
     def extract_info(url):
         """Get video metadata without downloading."""
-        ydl_opts = {'quiet': True, 'no_warnings': True}
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            return {
-                'title': info.get('title', 'Unknown'),
-                'artist': info.get('artist') or info.get('uploader', 'Unknown'),
-                'duration': info.get('duration', 0),
-                'youtube_id': info.get('id', ''),
-                'thumbnail': info.get('thumbnail', ''),
-            }
+        ydl_opts = YouTubeService._base_ydl_opts()
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                return {
+                    'title': info.get('title', 'Unknown'),
+                    'artist': info.get('artist') or info.get('uploader', 'Unknown'),
+                    'duration': info.get('duration', 0),
+                    'youtube_id': info.get('id', ''),
+                    'thumbnail': info.get('thumbnail', ''),
+                }
+        except DownloadError as exc:
+            YouTubeService._raise_friendly_download_error(exc)
 
     @staticmethod
     def download_audio(url):
@@ -33,7 +101,8 @@ class YouTubeService:
         if os.path.exists(cached_path):
             return cached_path, info
 
-        ydl_opts = {
+        ydl_opts = YouTubeService._base_ydl_opts()
+        ydl_opts.update({
             'format': 'bestaudio/best',
             'outtmpl': output_template + '.%(ext)s',
             'postprocessors': [{
@@ -41,10 +110,11 @@ class YouTubeService:
                 'preferredcodec': 'mp3',
                 'preferredquality': '192',
             }],
-            'quiet': True,
-            'no_warnings': True,
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
+        })
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+        except DownloadError as exc:
+            YouTubeService._raise_friendly_download_error(exc)
 
         return cached_path, info

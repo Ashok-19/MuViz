@@ -247,6 +247,22 @@ python manage.py migrate
 pip install -U yt-dlp
 ```
 
+- If you see `Sign in to confirm you're not a bot` on cloud hosting:
+  - export YouTube cookies in Netscape format from your browser,
+  - base64 encode them,
+  - set `YTDLP_COOKIES_B64` in your deployment environment,
+  - redeploy.
+
+Encode cookies locally:
+
+```bash
+base64 -w 0 youtube-cookies.txt
+```
+
+Optional related environment variables:
+- `YTDLP_COOKIE_FILE`: absolute path to a cookies file (for non-container servers)
+- `YTDLP_PLAYER_CLIENTS`: comma-separated clients, default `android,web`
+
 ### Lyrics return errors
 - Install `syncedlyrics`:
 
