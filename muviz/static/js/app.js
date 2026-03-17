@@ -39,6 +39,9 @@
     const uploadProgress = document.getElementById('uploadProgress');
     const progressFill = document.getElementById('progressFill');
     const progressText = document.getElementById('progressText');
+    const selectedFile = document.getElementById('selectedFile');
+    const selectedFileName = document.getElementById('selectedFileName');
+    const selectedFileMeta = document.getElementById('selectedFileMeta');
 
     dropZone.addEventListener('click', () => fileInput.click());
     dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
@@ -52,7 +55,24 @@
         if (fileInput.files.length) uploadFile(fileInput.files[0]);
     });
 
+    function formatFileSize(bytes) {
+        if (!Number.isFinite(bytes) || bytes <= 0) return 'Unknown size';
+        const units = ['B', 'KB', 'MB', 'GB'];
+        let size = bytes;
+        let unitIndex = 0;
+        while (size >= 1024 && unitIndex < units.length - 1) {
+            size /= 1024;
+            unitIndex += 1;
+        }
+        const precision = unitIndex === 0 ? 0 : 1;
+        return `${size.toFixed(precision)} ${units[unitIndex]}`;
+    }
+
     function uploadFile(file) {
+        selectedFile.hidden = false;
+        selectedFileName.textContent = file.name;
+        selectedFileMeta.textContent = `${formatFileSize(file.size)} • Preparing upload`;
+
         const formData = new FormData();
         formData.append('file', file);
 
@@ -68,6 +88,7 @@
                 const pct = Math.round((e.loaded / e.total) * 100);
                 progressFill.style.width = pct + '%';
                 progressText.textContent = pct + '%';
+                selectedFileMeta.textContent = `${formatFileSize(file.size)} • ${pct}% uploaded`;
             }
         };
 
@@ -76,63 +97,23 @@
                 const data = JSON.parse(xhr.responseText);
                 progressText.textContent = 'Redirecting...';
                 progressFill.style.width = '100%';
+                selectedFileMeta.textContent = `${formatFileSize(file.size)} • Upload complete`;
                 window.location.href = '/play/' + data.id + '/';
             } else {
                 const err = JSON.parse(xhr.responseText);
                 showToast(err.error || 'Upload failed');
                 uploadProgress.classList.remove('active');
+                selectedFileMeta.textContent = `${formatFileSize(file.size)} • Upload failed`;
             }
         };
 
         xhr.onerror = () => {
             showToast('Network error during upload');
             uploadProgress.classList.remove('active');
+            selectedFileMeta.textContent = `${formatFileSize(file.size)} • Network error`;
         };
 
         xhr.send(formData);
-    }
-
-    // ── YouTube ───────────────────────────────────
-    const ytUrl = document.getElementById('ytUrl');
-    const ytBtn = document.getElementById('ytBtn');
-    const ytBtnText = document.getElementById('ytBtnText');
-    const ytSpinner = document.getElementById('ytSpinner');
-
-    ytBtn.addEventListener('click', fetchYouTube);
-    ytUrl.addEventListener('keydown', e => { if (e.key === 'Enter') fetchYouTube(); });
-
-    function fetchYouTube() {
-        const url = ytUrl.value.trim();
-        if (!url) { showToast('Please paste a YouTube URL'); return; }
-
-        ytBtnText.textContent = '';
-        ytSpinner.classList.remove('hidden');
-        ytBtn.disabled = true;
-
-        fetch('/api/youtube/', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url }),
-        })
-            .then(r => r.json().then(d => ({ ok: r.ok, data: d })))
-            .then(({ ok, data }) => {
-                if (ok) {
-                    window.location.href = '/play/' + data.id + '/';
-                } else {
-                    showToast(data.error || 'Failed to fetch YouTube audio');
-                    resetYtBtn();
-                }
-            })
-            .catch(() => {
-                showToast('Network error');
-                resetYtBtn();
-            });
-    }
-
-    function resetYtBtn() {
-        ytBtnText.textContent = 'Visualize';
-        ytSpinner.classList.add('hidden');
-        ytBtn.disabled = false;
     }
 
     // ── Preview Animations ────────────────────────

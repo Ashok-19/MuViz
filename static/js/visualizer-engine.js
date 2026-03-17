@@ -26,6 +26,7 @@
     // ── State ──────────────────────────────────
     const engine = {
         mode: 'milkdrop',    // 'spectrum' | 'milkdrop'
+        initialPresetApplied: false,
         // Milkdrop
         milkdrop: null,
         mdCanvas: document.getElementById('milkdropCanvas'),
@@ -41,6 +42,38 @@
         audioMotion: null,
         amContainer: document.getElementById('spectrumContainer'),
     };
+
+    function randomIndex(length) {
+        return length > 0 ? Math.floor(Math.random() * length) : 0;
+    }
+
+    function applyRandomSpectrumPreset() {
+        if (!window.SPECTRUM_PRESETS || !window.SPECTRUM_PRESETS.length) return;
+        const preset = window.SPECTRUM_PRESETS[randomIndex(window.SPECTRUM_PRESETS.length)];
+        applySpectrumPreset(preset);
+
+        const specGrid = document.getElementById('spectrumPresetGrid');
+        if (specGrid) {
+            specGrid.querySelectorAll('.preset-card').forEach(card => {
+                const presetIdx = parseInt(card.dataset.spIdx, 10);
+                card.classList.toggle('active', window.SPECTRUM_PRESETS[presetIdx] === preset);
+            });
+        }
+    }
+
+    function applyRandomMilkdropPreset() {
+        if (!engine.mdPresetNames.length) return;
+        loadMilkdropPreset(randomIndex(engine.mdPresetNames.length), 0);
+    }
+
+    function applyRandomInitialVisualizer() {
+        if (engine.initialPresetApplied) return;
+        engine.initialPresetApplied = true;
+
+        const modes = ['milkdrop', 'spectrum'];
+        const initialMode = modes[randomIndex(modes.length)];
+        setMode(initialMode);
+    }
 
     // ══════════════════════════════════════════════
     //  SPECTRUM MODE (audioMotion-analyzer)
@@ -99,6 +132,10 @@
         }
 
         engine.audioMotion.gradient = 'orangered';
+
+        if (engine.mode === 'spectrum' && engine.initialPresetApplied) {
+            applyRandomSpectrumPreset();
+        }
     }
 
     function applySpectrumPreset(preset) {
@@ -206,8 +243,9 @@
                 });
             }
 
-            // Load first preset
-            if (engine.mdPresetNames.length > 0) {
+            if (engine.mode === 'milkdrop' && engine.initialPresetApplied) {
+                applyRandomMilkdropPreset();
+            } else if (engine.mdPresetNames.length > 0) {
                 loadMilkdropPreset(0, 0);
             }
 
@@ -548,6 +586,8 @@
 
     // Initialize seek UI even if media metadata loaded before listeners were attached.
     syncDurationUI();
+    audioEl.volume = parseFloat(volumeSlider.value || '0.8');
+    muteBtn.textContent = audioEl.volume > 0 ? '🔊' : '🔇';
     volumeSlider.addEventListener('input', () => {
         audioEl.volume = parseFloat(volumeSlider.value);
         muteBtn.textContent = audioEl.volume > 0 ? '🔊' : '🔇';
@@ -700,6 +740,7 @@
 
     // ── Toggle lyrics ──────────────────────────
     function toggleLyrics() {
+        if (!lyricsOverlay || !lyricsBtn) return;
         lyrics.active = !lyrics.active;
         lyricsOverlay.classList.toggle('active', lyrics.active);
         lyricsBtn.classList.toggle('active', lyrics.active);
@@ -726,8 +767,6 @@
                 fullscreenBtn.click(); break;
             case 'h': case 'H':
                 hideBarBtn.click(); break;
-            case 'l': case 'L':
-                toggleLyrics(); break;
             case 'n': case 'N':
                 if (engine.mode === 'milkdrop') nextMilkdropPreset(); break;
             case 'p': case 'P':
@@ -759,5 +798,5 @@
 
     // ── Initialize ─────────────────────────────
     bindControls();
-    setMode('milkdrop');
+    applyRandomInitialVisualizer();
 })();

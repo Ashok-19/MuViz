@@ -158,8 +158,11 @@
         width: 100%;
         min-height: clamp(72px, 10vh, 130px);
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
         justify-content: center;
+        column-gap: 0.26em;
+        row-gap: 0.08em;
         opacity: 0;
         transform: translateY(16px);
         transition: opacity 0.18s ease, transform 0.18s ease;
@@ -264,14 +267,6 @@
     <!-- audioMotion Container -->
     <div id="spectrumContainer"></div>
 
-    <!-- Lyrics Overlay -->
-    <div class="lyrics-overlay" id="lyricsOverlay">
-        <div class="lyrics-scroll" id="lyricsScroll">
-            <!-- Populated by JS -->
-        </div>
-    </div>
-    <div class="lyrics-status" id="lyricsStatus"></div>
-
     <!-- Back Link -->
     <div class="back-link">
         <a href="{% url 'visualizer:index' %}">← Back</a>
@@ -310,7 +305,6 @@
             </div>
 
             <div class="controls-right">
-                <button class="ctrl-btn" id="lyricsBtn" title="Lyrics (L)">🎤</button>
                 <button class="ctrl-btn" id="panelToggle" title="Customization">🎨</button>
                 <button class="ctrl-btn" id="hideBarBtn" title="Hide controls">⬇</button>
                 <button class="ctrl-btn" id="fullscreenBtn" title="Fullscreen">⛶</button>
@@ -328,7 +322,7 @@
         <!-- Mode Toggle -->
         <div class="mode-toggle">
             <button class="mode-btn" data-mode="spectrum">🎛️ Spectrum</button>
-            <button class="mode-btn active" data-mode="milkdrop">🌌 Milkdrop</button>
+            <button class="mode-btn" data-mode="milkdrop">🌌 Milkdrop</button>
         </div>
 
         <!-- ═══ Spectrum Controls ═══ -->
@@ -336,7 +330,7 @@
             <div class="panel-section">
                 <div class="section-title">Style</div>
                 <div class="spectrum-grid">
-                    <button class="spectrum-style-btn active" data-am-mode="0">▮ Discrete</button>
+                    <button class="spectrum-style-btn" data-am-mode="0">▮ Discrete</button>
                     <button class="spectrum-style-btn" data-am-mode="1">━ Line</button>
                     <button class="spectrum-style-btn" data-am-mode="2">█ Area Fill</button>
                     <button class="spectrum-style-btn" data-am-mode="10">█ Octave</button>

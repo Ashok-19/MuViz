@@ -1,15 +1,13 @@
 import os
 import json
 import mimetypes
-from django.shortcuts import render, redirect, get_object_or_404
+from django.shortcuts import render, get_object_or_404
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST, require_GET
-from django.conf import settings
 
 from .models import Track, Preset
-from .forms import AudioUploadForm, YouTubeURLForm
-from .services.youtube import YouTubeService
+from .forms import AudioUploadForm
 
 
 def index(request):
@@ -69,63 +67,6 @@ def api_upload(request):
         'duration': track.duration,
         'url': track.file.url,
     })
-
-
-@csrf_exempt
-@require_POST
-def api_youtube(request):
-    """Fetch audio from YouTube URL."""
-    try:
-        data = json.loads(request.body)
-        url = data.get('url', '')
-    except (json.JSONDecodeError, AttributeError):
-        url = request.POST.get('url', '')
-
-    if not url:
-        return JsonResponse({'error': 'URL is required'}, status=400)
-
-    try:
-        youtube_id = YouTubeService.extract_video_id(url)
-        if youtube_id:
-            existing = Track.objects.filter(youtube_id=youtube_id).first()
-            if existing and existing.file and existing.file.storage.exists(existing.file.name):
-                return JsonResponse({
-                    'id': existing.id,
-                    'title': existing.title,
-                    'artist': existing.artist,
-                    'duration': existing.duration,
-                    'url': existing.file.url,
-                })
-
-        filepath, info = YouTubeService.download_audio(url)
-        rel_path = os.path.relpath(filepath, settings.MEDIA_ROOT)
-
-        # Check if track already exists for this youtube_id
-        existing = Track.objects.filter(youtube_id=info['youtube_id']).first()
-        if existing:
-            track = existing
-        else:
-            track = Track.objects.create(
-                title=info['title'],
-                artist=info['artist'],
-                duration=info['duration'],
-                file=rel_path,
-                source='youtube',
-                youtube_url=url,
-                youtube_id=info['youtube_id'],
-                file_size=os.path.getsize(filepath),
-                mime_type='audio/mpeg',
-            )
-
-        return JsonResponse({
-            'id': track.id,
-            'title': track.title,
-            'artist': track.artist,
-            'duration': track.duration,
-            'url': settings.MEDIA_URL + rel_path,
-        })
-    except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
 
 
 @require_GET

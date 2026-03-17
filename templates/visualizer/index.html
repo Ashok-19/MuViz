@@ -19,48 +19,89 @@
 
 <!-- Hero -->
 <section class="hero animate-fade-in">
-    <h1>Transform your music<br>into visual art</h1>
-    <p>Immersive, real-time audio visualization with deep customization. Upload a track or paste a YouTube link to begin.</p>
+    <div class="hero-kicker">Local-First Audio Visualizer</div>
+    <h1>Drop a track.<br>Shape the room.</h1>
+    <p>Upload your own audio, jump straight into Milkdrop or spectrum mode, and keep the whole session centered on your file instead of a third-party source.</p>
 </section>
 
 <!-- Upload Section -->
 <section class="upload-section animate-fade-in-up stagger-1">
-    <div class="upload-card">
-        <!-- Drop Zone -->
-        <div class="drop-zone" id="dropZone">
-            <span class="drop-icon">🎵</span>
-            <div class="drop-text">Drop your audio file here</div>
-            <div class="drop-subtext">or click to browse</div>
-            <div class="drop-formats">
-                <span class="format-tag">MP3</span>
-                <span class="format-tag">WAV</span>
-                <span class="format-tag">OGG</span>
-                <span class="format-tag">FLAC</span>
-                <span class="format-tag">AAC</span>
-                <span class="format-tag">M4A</span>
+    <div class="upload-shell">
+        <div class="upload-card upload-card-primary">
+            <div class="upload-badge">Local Files Only</div>
+            <h2 class="upload-title">Built for direct uploads and instant playback</h2>
+            <p class="upload-copy">Drag in a file from your machine and MuViz handles the rest: metadata, playback, live visuals, and lyrics when they are available.</p>
+
+            <div class="drop-zone" id="dropZone">
+                <div class="drop-backdrop"></div>
+                <span class="drop-icon">♫</span>
+                <div class="drop-text">Drop your audio file here</div>
+                <div class="drop-subtext">or click to choose a track</div>
+                <div class="drop-action">
+                    <span class="drop-action-pill">Choose File</span>
+                    <span class="drop-action-hint">Uploads start immediately</span>
+                </div>
+                <div class="drop-formats">
+                    <span class="format-tag">MP3</span>
+                    <span class="format-tag">WAV</span>
+                    <span class="format-tag">OGG</span>
+                    <span class="format-tag">FLAC</span>
+                    <span class="format-tag">AAC</span>
+                    <span class="format-tag">M4A</span>
+                    <span class="format-tag">WEBM</span>
+                </div>
+                <input type="file" id="fileInput" accept=".mp3,.wav,.ogg,.flac,.aac,.m4a,.webm" hidden>
             </div>
-            <input type="file" id="fileInput" accept=".mp3,.wav,.ogg,.flac,.aac,.m4a,.webm" hidden>
+
+            <div class="selected-file" id="selectedFile" hidden>
+                <div class="selected-file-icon">♪</div>
+                <div class="selected-file-copy">
+                    <div class="selected-file-name" id="selectedFileName">No file selected</div>
+                    <div class="selected-file-meta" id="selectedFileMeta">Ready for upload</div>
+                </div>
+            </div>
+
+            <div class="upload-highlights">
+                <div class="upload-highlight">
+                    <strong>Fast local flow</strong>
+                    <span>No external source setup, no cookies, no proxy step.</span>
+                </div>
+                <div class="upload-highlight">
+                    <strong>Visualizer-ready</strong>
+                    <span>Jump directly into Milkdrop presets or spectrum mode after upload.</span>
+                </div>
+                <div class="upload-highlight">
+                    <strong>Lyrics supported</strong>
+                    <span>MuViz still tries synced lyrics based on your track metadata.</span>
+                </div>
+            </div>
+
+            <!-- Upload Progress -->
+            <div class="upload-progress" id="uploadProgress">
+                <div class="spinner"></div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <span class="progress-text" id="progressText">Uploading...</span>
+            </div>
         </div>
 
-        <!-- Upload Progress -->
-        <div class="upload-progress" id="uploadProgress">
-            <div class="spinner"></div>
-            <div class="progress-bar">
-                <div class="progress-fill" id="progressFill"></div>
+        <div class="upload-side">
+            <div class="support-card">
+                <div class="support-card-label">Recommended</div>
+                <h3>Best results start with clean local audio</h3>
+                <ul class="support-list">
+                    <li>Use MP3, WAV, FLAC, AAC, M4A, OGG, or WEBM.</li>
+                    <li>Tracks up to 50 MB are accepted.</li>
+                    <li>Embedded metadata improves title, artist, and lyric matching.</li>
+                </ul>
             </div>
-            <span class="progress-text" id="progressText">Uploading...</span>
-        </div>
 
-        <!-- Divider -->
-        <div class="divider">or</div>
-
-        <!-- YouTube Input -->
-        <div class="youtube-row">
-            <input type="text" class="input" id="ytUrl" placeholder="Paste YouTube URL..." autocomplete="off">
-            <button class="btn btn-primary" id="ytBtn">
-                <span id="ytBtnText">Visualize</span>
-                <div class="spinner hidden" id="ytSpinner"></div>
-            </button>
+            <div class="support-card support-card-accent">
+                <div class="support-card-label">Why Local</div>
+                <h3>A cleaner, more reliable session</h3>
+                <p>Your upload becomes the source of truth for playback, timing, seek controls, and visual analysis, which keeps the experience much more stable.</p>
+            </div>
         </div>
     </div>
 </section>

@@ -3,14 +3,12 @@
 MuViz is a Django-based music visualizer web app.
 It supports:
 - local audio upload
-- YouTube audio import
 - real-time visualization (Milkdrop + spectrum mode)
 - synced lyric overlay with karaoke-style word highlighting
 
 ## What You Get
 
 - Upload audio files and start visualizing immediately
-- Paste a YouTube URL and auto-download audio via `yt-dlp`
 - Two visualizer engines in one player:
   - Milkdrop presets via `butterchurn`
   - Spectrum mode via `audiomotion-analyzer`
@@ -22,7 +20,6 @@ It supports:
 - Backend: Django 5
 - Database: SQLite (`db.sqlite3`)
 - Audio metadata: `mutagen`
-- YouTube download: `yt-dlp` + FFmpeg
 - Frontend: Django templates + vanilla JS + CSS
 - Visualizer libraries (loaded from CDN):
   - `butterchurn`
@@ -45,8 +42,6 @@ forge-website/
     views.py
     urls.py
     forms.py
-    services/
-      youtube.py
     migrations/
   templates/
     visualizer/
@@ -71,8 +66,7 @@ forge-website/
 ## Prerequisites
 
 - Python 3.10+
-- FFmpeg installed and available on PATH
-- Internet access (for YouTube download and CDN scripts)
+- Internet access (for CDN scripts and lyric lookup)
 
 Optional but recommended:
 - `syncedlyrics` package for automatic lyric search (the app calls it in `api_lyrics`)
@@ -202,7 +196,6 @@ Base routes are defined in `visualizer/urls.py`.
 - `GET /` -> landing page
 - `GET /play/<track_id>/` -> visualizer player
 - `POST /api/upload/` -> upload local audio
-- `POST /api/youtube/` -> download audio from YouTube URL
 - `GET /api/presets/` -> list saved presets
 - `POST /api/presets/save/` -> save custom preset
 - `DELETE /api/presets/<preset_id>/delete/` -> delete non-built-in preset
@@ -213,8 +206,7 @@ Base routes are defined in `visualizer/urls.py`.
 `Track`:
 - metadata (title, artist, album, duration)
 - file path and mime data
-- source type (`upload` or `youtube`)
-- YouTube identifiers
+- source type
 - cached synced lyric text (`lyrics_lrc`)
 
 `Preset`:
@@ -238,30 +230,6 @@ python manage.py migrate
 ```
 
 ## Troubleshooting
-
-### YouTube downloads fail
-- Make sure FFmpeg is installed
-- Update `yt-dlp`:
-
-```bash
-pip install -U yt-dlp
-```
-
-- If you see `Sign in to confirm you're not a bot` on cloud hosting:
-  - export YouTube cookies in Netscape format from your browser,
-  - base64 encode them,
-  - set `YTDLP_COOKIES_B64` in your deployment environment,
-  - redeploy.
-
-Encode cookies locally:
-
-```bash
-base64 -w 0 youtube-cookies.txt
-```
-
-Optional related environment variables:
-- `YTDLP_COOKIE_FILE`: absolute path to a cookies file (for non-container servers)
-- `YTDLP_PLAYER_CLIENTS`: comma-separated clients, default `auto` to let `yt-dlp` choose the best anonymous clients
 
 ### Lyrics return errors
 - Install `syncedlyrics`:

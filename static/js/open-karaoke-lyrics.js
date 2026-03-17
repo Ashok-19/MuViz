@@ -432,10 +432,7 @@
 
             this.singleLineEl.classList.remove('okl-line-instrumental');
 
-            line.words.forEach((word, index) => {
-                if (index > 0) {
-                    this.singleLineEl.appendChild(document.createTextNode(' '));
-                }
+            line.words.forEach(word => {
                 const wordEl = document.createElement('span');
                 wordEl.className = 'okl-word';
                 wordEl.textContent = word.text;

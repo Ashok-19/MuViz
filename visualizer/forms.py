@@ -17,7 +17,3 @@ class AudioUploadForm(forms.Form):
             max_mb = settings.MAX_UPLOAD_SIZE // (1024 * 1024)
             raise forms.ValidationError(f'File too large. Maximum size is {max_mb}MB.')
         return f
-
-
-class YouTubeURLForm(forms.Form):
-    url = forms.URLField(max_length=500)
