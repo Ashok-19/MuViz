@@ -1,0 +1,97 @@
+{% extends 'visualizer/base.html' %}
+{% load static %}
+
+{% block title %}MuViz — Transform Music into Visual Art{% endblock %}
+
+{% block body %}
+<!-- Header -->
+<header class="header">
+    <div class="logo">
+        <div class="logo-icon">♪</div>
+        MuViz
+    </div>
+    <button class="btn-icon" id="themeToggle" title="Toggle dark mode">
+        <svg id="themeIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+    </button>
+</header>
+
+<!-- Hero -->
+<section class="hero animate-fade-in">
+    <h1>Transform your music<br>into visual art</h1>
+    <p>Immersive, real-time audio visualization with deep customization. Upload a track or paste a YouTube link to begin.</p>
+</section>
+
+<!-- Upload Section -->
+<section class="upload-section animate-fade-in-up stagger-1">
+    <div class="upload-card">
+        <!-- Drop Zone -->
+        <div class="drop-zone" id="dropZone">
+            <span class="drop-icon">🎵</span>
+            <div class="drop-text">Drop your audio file here</div>
+            <div class="drop-subtext">or click to browse</div>
+            <div class="drop-formats">
+                <span class="format-tag">MP3</span>
+                <span class="format-tag">WAV</span>
+                <span class="format-tag">OGG</span>
+                <span class="format-tag">FLAC</span>
+                <span class="format-tag">AAC</span>
+                <span class="format-tag">M4A</span>
+            </div>
+            <input type="file" id="fileInput" accept=".mp3,.wav,.ogg,.flac,.aac,.m4a,.webm" hidden>
+        </div>
+
+        <!-- Upload Progress -->
+        <div class="upload-progress" id="uploadProgress">
+            <div class="spinner"></div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <span class="progress-text" id="progressText">Uploading...</span>
+        </div>
+
+        <!-- Divider -->
+        <div class="divider">or</div>
+
+        <!-- YouTube Input -->
+        <div class="youtube-row">
+            <input type="text" class="input" id="ytUrl" placeholder="Paste YouTube URL..." autocomplete="off">
+            <button class="btn btn-primary" id="ytBtn">
+                <span id="ytBtnText">Visualize</span>
+                <div class="spinner hidden" id="ytSpinner"></div>
+            </button>
+        </div>
+    </div>
+</section>
+
+<!-- Preview Cards -->
+<section class="preview-section animate-fade-in-up stagger-2">
+    <h3>Visualizer Styles</h3>
+    <div class="preview-grid">
+        <div class="preview-card" data-viz="bars">
+            <canvas id="previewBars"></canvas>
+            <span class="label">Bars</span>
+        </div>
+        <div class="preview-card" data-viz="waveform">
+            <canvas id="previewWave"></canvas>
+            <span class="label">Waveform</span>
+        </div>
+        <div class="preview-card" data-viz="circular">
+            <canvas id="previewCircular"></canvas>
+            <span class="label">Circular</span>
+        </div>
+        <div class="preview-card" data-viz="particles">
+            <canvas id="previewParticles"></canvas>
+            <span class="label">Particles</span>
+        </div>
+    </div>
+</section>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{% static 'js/app.js' %}"></script>
+{% endblock %}

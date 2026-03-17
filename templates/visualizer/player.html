@@ -1,0 +1,464 @@
+{% extends 'visualizer/base.html' %}
+{% load static %}
+
+{% block title %}{{ track.title }} — MuViz{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/visualizer.css' %}">
+<style>
+    /* ── Milkdrop canvas overlay ─────────── */
+    #milkdropCanvas {
+        position: fixed; top: 0; left: 0;
+        width: 100vw; height: 100vh;
+        z-index: 0; display: none;
+    }
+    /* ── audioMotion container ────────────── */
+    #spectrumContainer {
+        position: fixed; top: 0; left: 0;
+        width: 100vw; height: 100vh;
+        z-index: 0; display: none;
+        background: #050510;
+    }
+    #spectrumContainer canvas {
+        width: 100% !important;
+        height: 100% !important;
+    }
+    .mode-active { display: block !important; }
+
+    /* ── Preset browser (Milkdrop) ───────── */
+    .milkdrop-presets {
+        max-height: 340px;
+        overflow-y: auto;
+        display: block;
+        padding-right: 4px;
+    }
+    .milkdrop-presets::-webkit-scrollbar { width: 4px; }
+    .milkdrop-presets::-webkit-scrollbar-track { background: transparent; }
+    .milkdrop-presets::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
+    .md-preset-item {
+        display: block;
+        padding: 8px 10px;
+        margin-bottom: 4px;
+        font-size: 0.8rem;
+        line-height: 1.35;
+        font-weight: 600;
+        color: rgba(232,230,225,0.88);
+        background: rgba(255,255,255,0.03);
+        border: 1px solid transparent;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: background 0.15s, color 0.15s, border-color 0.15s;
+        white-space: normal;
+        overflow-wrap: anywhere;
+    }
+    .md-preset-item:hover {
+        background: rgba(255,255,255,0.09);
+        color: #fff;
+        border-color: rgba(255,255,255,0.14);
+    }
+    .md-preset-item.active {
+        background: rgba(193,95,60,0.25);
+        color: #ffd3c0;
+        border-color: rgba(193,95,60,0.5);
+    }
+
+    /* ── Mode toggle buttons ─────────────── */
+    .mode-toggle { display: flex; gap: 4px; margin-bottom: 12px; }
+    .mode-btn {
+        flex: 1; padding: 8px 12px;
+        background: rgba(255,255,255,0.06);
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 8px;
+        color: rgba(232,230,225,0.6);
+        font-size: 0.8rem; font-weight: 500;
+        cursor: pointer; transition: all 0.2s;
+        text-align: center;
+        font-family: var(--font-primary, 'Inter', sans-serif);
+    }
+    .mode-btn:hover { background: rgba(255,255,255,0.1); color: #E8E6E1; }
+    .mode-btn.active {
+        background: rgba(193,95,60,0.2);
+        border-color: rgba(193,95,60,0.4);
+        color: #C15F3C;
+    }
+
+    /* ── Search input ────────────────────── */
+    .preset-search {
+        width: 100%; padding: 6px 10px;
+        background: rgba(255,255,255,0.06);
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 6px;
+        color: #E8E6E1; font-size: 0.78rem;
+        outline: none; margin-bottom: 8px;
+        font-family: var(--font-primary, 'Inter', sans-serif);
+    }
+    .preset-search::placeholder { color: rgba(232,230,225,0.35); }
+    .preset-search:focus { border-color: rgba(193,95,60,0.4); }
+
+    .spectrum-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 4px;
+        margin-bottom: 8px;
+    }
+    .spectrum-style-btn {
+        padding: 8px 6px;
+        background: rgba(255,255,255,0.06);
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 8px;
+        color: rgba(232,230,225,0.6);
+        font-size: 0.72rem; font-weight: 500;
+        cursor: pointer; transition: all 0.2s;
+        text-align: center;
+        font-family: var(--font-primary, 'Inter', sans-serif);
+    }
+    .spectrum-style-btn:hover { background: rgba(255,255,255,0.1); color: #E8E6E1; }
+    .spectrum-style-btn.active {
+        background: rgba(193,95,60,0.2);
+        border-color: rgba(193,95,60,0.4);
+        color: #C15F3C;
+    }
+
+    /* Auto-cycle indicator */
+    .cycle-info {
+        font-size: 0.7rem;
+        color: rgba(232,230,225,0.4);
+        text-align: center;
+        padding: 4px 0;
+    }
+
+    /* ── Lyrics Overlay (Open Karaoke Renderer) ── */
+    .lyrics-overlay {
+        position: fixed;
+        top: 0; left: 0;
+        width: 100vw; height: 100vh;
+        z-index: 2;
+        display: none;
+        pointer-events: none;
+        overflow: clip;
+        align-items: center;
+        justify-content: center;
+    }
+    .lyrics-overlay.active { display: flex; }
+
+    .lyrics-scroll {
+        width: min(94vw, 1400px);
+        min-height: 0;
+        text-align: center;
+        padding: 0 26px;
+        position: relative;
+        background: transparent;
+        border: none;
+        border-radius: 0;
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+    }
+
+    .okl-single-line {
+        width: 100%;
+        min-height: clamp(72px, 10vh, 130px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0;
+        transform: translateY(16px);
+        transition: opacity 0.18s ease, transform 0.18s ease;
+    }
+
+    .okl-single-line.active {
+        opacity: 1;
+        transform: translateY(0);
+    }
+
+    .okl-single-line,
+    .okl-single-line.okl-line-instrumental {
+        font-family: var(--font-display, 'Sora', 'Inter', sans-serif);
+        font-size: clamp(2.2rem, 5.4vw, 5.3rem);
+        font-weight: 800;
+        color: rgba(255,255,255,0.83);
+        line-height: 1.16;
+        padding: 0;
+        text-align: center;
+        letter-spacing: -0.018em;
+        text-shadow:
+            0 0 18px rgba(193,95,60,0.6),
+            0 0 38px rgba(193,95,60,0.24),
+            0 5px 24px rgba(0,0,0,0.56);
+    }
+
+    .okl-single-line.okl-line-instrumental {
+        font-style: italic;
+        color: rgba(255,236,206,0.95);
+    }
+
+    .okl-word {
+        position: relative;
+        display: inline-block;
+        color: rgba(255,255,255,0.72);
+        --okl-progress: 0%;
+    }
+
+    .okl-word::before {
+        content: attr(data-text);
+        position: absolute;
+        left: 0;
+        top: 0;
+        color: #fff5e7;
+        text-shadow:
+            0 0 10px rgba(255,213,182,0.7),
+            0 0 28px rgba(255,146,92,0.55);
+        clip-path: inset(0 calc(100% - var(--okl-progress)) 0 0);
+        white-space: nowrap;
+        pointer-events: none;
+    }
+
+    .okl-word.past {
+        color: rgba(255,244,236,0.9);
+        --okl-progress: 100%;
+    }
+
+    .okl-word.active {
+        color: #ffffff;
+    }
+
+    #lyricsBtn.active {
+        background: rgba(193,95,60,0.2);
+        color: #ffd8c8;
+        border: 1px solid rgba(193,95,60,0.65);
+        box-shadow: 0 0 0 1px rgba(193,95,60,0.25), 0 0 14px rgba(193,95,60,0.3);
+    }
+
+    @media (max-width: 900px) {
+        .lyrics-scroll {
+            width: 94vw;
+            padding: 0 14px;
+        }
+        .okl-single-line,
+        .okl-single-line.okl-line-instrumental {
+            font-size: clamp(1.8rem, 8vw, 3.3rem);
+        }
+    }
+
+    .lyrics-status {
+        position: fixed;
+        top: 16px; left: 50%;
+        transform: translateX(-50%);
+        z-index: 3;
+        font-size: 0.75rem;
+        color: rgba(232,230,225,0.5);
+        font-family: var(--font-primary, 'Inter', sans-serif);
+        padding: 4px 12px;
+        background: rgba(0,0,0,0.4);
+        border-radius: 12px;
+        display: none;
+    }
+    .lyrics-status.visible { display: block; }
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="player-page controls-visible" id="playerPage">
+    <!-- Milkdrop WebGL Canvas -->
+    <canvas id="milkdropCanvas"></canvas>
+
+    <!-- audioMotion Container -->
+    <div id="spectrumContainer"></div>
+
+    <!-- Lyrics Overlay -->
+    <div class="lyrics-overlay" id="lyricsOverlay">
+        <div class="lyrics-scroll" id="lyricsScroll">
+            <!-- Populated by JS -->
+        </div>
+    </div>
+    <div class="lyrics-status" id="lyricsStatus"></div>
+
+    <!-- Back Link -->
+    <div class="back-link">
+        <a href="{% url 'visualizer:index' %}">← Back</a>
+    </div>
+
+    <!-- Audio Element -->
+    <audio id="audioEl" crossorigin="anonymous" preload="auto">
+        <source src="{{ track.file.url }}" type="{{ track.mime_type|default:'audio/mpeg' }}">
+    </audio>
+
+    <!-- Bottom Bar -->
+    <div class="bottom-bar" id="bottomBar">
+        <div class="track-info">
+            <span class="track-title">{{ track.title }}</span>
+            {% if track.artist %}<span class="track-artist">— {{ track.artist }}</span>{% endif %}
+        </div>
+
+        <!-- Seek -->
+        <div class="seek-row">
+            <span class="seek-time" id="currentTime">0:00</span>
+            <input type="range" class="seek-bar" id="seekBar" min="0" max="100" value="0" step="0.1">
+            <span class="seek-time" id="totalTime">0:00</span>
+        </div>
+
+        <!-- Controls -->
+        <div class="controls-row">
+            <div class="controls-left">
+                <div class="volume-wrap">
+                    <button class="ctrl-btn" id="muteBtn" title="Mute">🔊</button>
+                    <input type="range" class="volume-slider" id="volumeSlider" min="0" max="1" value="0.8" step="0.01">
+                </div>
+            </div>
+
+            <div class="controls-center">
+                <button class="ctrl-btn play-btn" id="playBtn" title="Play">▶</button>
+            </div>
+
+            <div class="controls-right">
+                <button class="ctrl-btn" id="lyricsBtn" title="Lyrics (L)">🎤</button>
+                <button class="ctrl-btn" id="panelToggle" title="Customization">🎨</button>
+                <button class="ctrl-btn" id="hideBarBtn" title="Hide controls">⬇</button>
+                <button class="ctrl-btn" id="fullscreenBtn" title="Fullscreen">⛶</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Control Panel -->
+    <div class="control-panel" id="controlPanel">
+        <div class="panel-header">
+            <h3>Customize</h3>
+            <button class="panel-close" id="panelClose">✕</button>
+        </div>
+
+        <!-- Mode Toggle -->
+        <div class="mode-toggle">
+            <button class="mode-btn" data-mode="spectrum">🎛️ Spectrum</button>
+            <button class="mode-btn active" data-mode="milkdrop">🌌 Milkdrop</button>
+        </div>
+
+        <!-- ═══ Spectrum Controls ═══ -->
+        <div id="spectrumControls" style="display:none;">
+            <div class="panel-section">
+                <div class="section-title">Style</div>
+                <div class="spectrum-grid">
+                    <button class="spectrum-style-btn active" data-am-mode="0">▮ Discrete</button>
+                    <button class="spectrum-style-btn" data-am-mode="1">━ Line</button>
+                    <button class="spectrum-style-btn" data-am-mode="2">█ Area Fill</button>
+                    <button class="spectrum-style-btn" data-am-mode="10">█ Octave</button>
+                </div>
+            </div>
+
+            <div class="panel-section">
+                <div class="section-title">Options</div>
+                <div class="ctrl-row">
+                    <span class="ctrl-label">Gradient</span>
+                    <select class="select" id="amGradient">
+                        <option value="classic">Classic</option>
+                        <option value="prism">Prism</option>
+                        <option value="rainbow">Rainbow</option>
+                        <option value="orangered" selected>Orangered</option>
+                        <option value="steelblue">Steel Blue</option>
+                        <option value="sunset">Sunset</option>
+                        <option value="neon">Neon</option>
+                        <option value="cyberpunk">Cyberpunk</option>
+                    </select>
+                </div>
+                <div class="ctrl-row">
+                    <span class="ctrl-label">LED Bars</span>
+                    <input type="checkbox" class="toggle" id="amLedBars">
+                </div>
+                <div class="ctrl-row">
+                    <span class="ctrl-label">Lumi Bars</span>
+                    <input type="checkbox" class="toggle" id="amLumiBars">
+                </div>
+                <div class="ctrl-row">
+                    <span class="ctrl-label">Radial</span>
+                    <input type="checkbox" class="toggle" id="amRadial">
+                </div>
+                <div class="ctrl-row">
+                    <span class="ctrl-label">Mirror</span>
+                    <select class="select" id="amMirror">
+                        <option value="0">None</option>
+                        <option value="-1">Left → Right</option>
+                        <option value="1">Right → Left</option>
+                    </select>
+                </div>
+                <div class="ctrl-row">
+                    <span class="ctrl-label">Reflection</span>
+                    <input type="checkbox" class="toggle" id="amReflect" checked>
+                </div>
+                <div class="ctrl-row">
+                    <span class="ctrl-label">Split Layout</span>
+                    <input type="checkbox" class="toggle" id="amSplitLayout">
+                </div>
+                <div class="ctrl-row">
+                    <span class="ctrl-label">Bar Spacing</span>
+                    <input type="range" class="slider" id="amBarSpace" min="0" max="1" value="0.15" step="0.01">
+                    <span class="ctrl-value" id="amBarSpaceVal">0.15</span>
+                </div>
+                <div class="ctrl-row">
+                    <span class="ctrl-label">Line Width</span>
+                    <input type="range" class="slider" id="amLineWidth" min="1" max="5" value="2" step="0.5">
+                    <span class="ctrl-value" id="amLineWidthVal">2</span>
+                </div>
+                <div class="ctrl-row">
+                    <span class="ctrl-label">Fill Alpha</span>
+                    <input type="range" class="slider" id="amFillAlpha" min="0" max="1" value="0.2" step="0.05">
+                    <span class="ctrl-value" id="amFillAlphaVal">0.2</span>
+                </div>
+            </div>
+
+            <div class="panel-section">
+                <div class="section-title">Spectrum Presets</div>
+                <div class="preset-grid" id="spectrumPresetGrid"></div>
+            </div>
+        </div>
+
+        <!-- ═══ Milkdrop Controls ═══ -->
+        <div id="milkdropControls">
+            <div class="panel-section">
+                <div class="section-title">Milkdrop Presets</div>
+                <input type="text" class="preset-search" id="mdPresetSearch" placeholder="Search presets...">
+                <div class="milkdrop-presets" id="mdPresetList">
+                    <!-- Populated by JS -->
+                </div>
+                <div class="cycle-info">Press N for next preset • P for previous</div>
+            </div>
+            <div class="panel-section">
+                <div class="section-title">Options</div>
+                <div class="ctrl-row">
+                    <span class="ctrl-label">Auto-Cycle</span>
+                    <input type="checkbox" class="toggle" id="mdAutoCycle" checked>
+                </div>
+                <div class="ctrl-row">
+                    <span class="ctrl-label">Cycle Time (s)</span>
+                    <input type="range" class="slider" id="mdCycleTime" min="5" max="60" value="5" step="1">
+                    <span class="ctrl-value" id="mdCycleTimeVal">5</span>
+                </div>
+                <div class="ctrl-row">
+                    <span class="ctrl-label">Blend Time (s)</span>
+                    <input type="range" class="slider" id="mdBlendTime" min="0" max="5" value="1.5" step="0.1">
+                    <span class="ctrl-value" id="mdBlendTimeVal">1.5</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    window.TRACK = {
+        id: {{ track.id }},
+        title: "{{ track.title|escapejs }}",
+        artist: "{{ track.artist|escapejs }}",
+        duration: {{ track.duration|default:"0" }},
+        url: "{{ track.file.url }}",
+    };
+</script>
+
+<!-- Open-source visualizer libraries (CDN) -->
+<script src="https://cdn.jsdelivr.net/npm/butterchurn@2.6.7/lib/butterchurn.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/butterchurn-presets@2.4.7/lib/butterchurnPresets.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/audiomotion-analyzer@4"></script>
+
+<!-- App scripts -->
+<script src="{% static 'js/presets.js' %}"></script>
+<script src="{% static 'js/open-karaoke-lyrics.js' %}"></script>
+<script src="{% static 'js/visualizer-engine.js' %}"></script>
+{% endblock %}
