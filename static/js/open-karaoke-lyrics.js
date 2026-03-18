@@ -27,21 +27,74 @@
         'vou', 'voce', 'voces', 'we', 'weeknd', 'yeah',
     ]);
 
+    const MIN_WORD_DURATION_SEC = 0.03;
+    const MAX_WORD_DURATION_SEC = 2.2;
+    const DEFAULT_LAST_LINE_SPAN_SEC = 4.2;
+
     function clamp(value, min, max) {
         return Math.max(min, Math.min(max, value));
     }
 
     class OpenKaraokeParser {
-        static retimeWords(tokens, startTime, endTime) {
+        static tokenTimingWeight(token) {
+            const text = String(token || '');
+            if (!text) return 1;
+
+            if (/^[,.;:!?"'()\-]+$/.test(text)) {
+                return 0.45;
+            }
+
+            const clean = text
+                .toLowerCase()
+                .replace(/^[^a-z0-9']+|[^a-z0-9']+$/g, '');
+
+            if (!clean) return 0.65;
+
+            const len = clean.length;
+            if (len <= 2) return 0.72;
+            if (len <= 4) return 1;
+            if (len <= 7) return 1.25;
+            return clamp(1.25 + (len - 7) * 0.1, 1.25, 2.15);
+        }
+
+        static buildWeightedWordTimeline(tokens, startTime, endTime) {
             const clean = tokens.filter(Boolean);
             if (!clean.length) return [];
-            const span = Math.max(0.8, (endTime || startTime + 3.5) - startTime);
-            const perWord = clamp(span / clean.length, 0.12, 1.5);
-            return clean.map((text, index) => ({
-                text,
-                timestamp: startTime + perWord * index,
-                duration: perWord,
-            }));
+
+            const safeStart = Number.isFinite(startTime) ? startTime : 0;
+            const safeEnd = Number.isFinite(endTime) ? endTime : safeStart + DEFAULT_LAST_LINE_SPAN_SEC;
+            const span = Math.max(MIN_WORD_DURATION_SEC * clean.length, safeEnd - safeStart);
+
+            const minTotalDuration = MIN_WORD_DURATION_SEC * clean.length;
+            if (span <= minTotalDuration + 0.001) {
+                const perWord = Math.max(0.01, span / clean.length);
+                return clean.map((text, index) => ({
+                    text,
+                    timestamp: safeStart + perWord * index,
+                    duration: perWord,
+                }));
+            }
+
+            const weights = clean.map(token => this.tokenTimingWeight(token));
+            const totalWeight = weights.reduce((sum, value) => sum + value, 0) || clean.length;
+            const stretchableSpan = Math.max(0, span - minTotalDuration);
+
+            let cursor = safeStart;
+            return clean.map((text, index) => {
+                const extra = (weights[index] / totalWeight) * stretchableSpan;
+                const duration = clamp(MIN_WORD_DURATION_SEC + extra, MIN_WORD_DURATION_SEC, MAX_WORD_DURATION_SEC);
+                const word = {
+                    text,
+                    timestamp: cursor,
+                    duration,
+                };
+                cursor += duration;
+                return word;
+            });
+        }
+
+        static retimeWords(tokens, startTime, endTime) {
+            return this.buildWeightedWordTimeline(tokens, startTime, endTime);
         }
 
         static tokenizeDisplayWords(text) {
@@ -215,25 +268,15 @@
                 const time = this.parseTimestamp(match[1]);
                 const wordText = match[2].trim();
                 if (time === null || !wordText) continue;
-                words.push({ text: wordText, timestamp: time, duration: 0.45 });
+                words.push({ text: wordText, timestamp: time, duration: 0.2 });
             }
             return words;
         }
 
         static estimateWords(lineText, startTime, endTime) {
-            const tokens = lineText.split(/\s+/).filter(Boolean);
-            if (!tokens.length) {
-                return [];
-            }
-
-            const lineDuration = Math.max(0.8, (endTime || startTime + 3.5) - startTime);
-            const perWord = clamp(lineDuration / tokens.length, 0.18, 1.2);
-
-            return tokens.map((token, index) => ({
-                text: token,
-                timestamp: startTime + perWord * index,
-                duration: perWord,
-            }));
+            const tokens = this.tokenizeDisplayWords(lineText);
+            if (!tokens.length) return [];
+            return this.buildWeightedWordTimeline(tokens, startTime, endTime);
         }
 
         parseSyncedLRC(lrcText) {
@@ -283,6 +326,7 @@
                         isBreak: false,
                         lineTimestamp: time,
                         rawText: cleanLyricText,
+                        hasEnhancedWords: wordsFromEnhanced.length > 0,
                         words: wordsFromEnhanced.length
                             ? wordsFromEnhanced.map(word => ({ ...word }))
                             : null,
@@ -296,7 +340,7 @@
             for (let i = 0; i < timed.length; i++) {
                 const curr = timed[i];
                 const next = timed[i + 1];
-                curr.endTime = next ? next.lineTimestamp : curr.lineTimestamp + 5;
+                curr.endTime = next ? next.lineTimestamp : curr.lineTimestamp + DEFAULT_LAST_LINE_SPAN_SEC;
 
                 curr.lineTimestamp = Math.max(0, curr.lineTimestamp + offsetSeconds);
                 curr.endTime = Math.max(curr.lineTimestamp + 0.2, curr.endTime + offsetSeconds);
@@ -304,11 +348,25 @@
                 if (!curr.words || !curr.words.length) {
                     curr.words = OpenKaraokeParser.estimateWords(curr.rawText, curr.lineTimestamp, curr.endTime);
                 } else {
+                    curr.words = curr.words
+                        .map(word => ({
+                            ...word,
+                            timestamp: Math.max(0, word.timestamp + offsetSeconds),
+                        }))
+                        .sort((a, b) => a.timestamp - b.timestamp);
+
+                    if (curr.words.length) {
+                        const firstWordTs = curr.words[0].timestamp;
+                        curr.lineTimestamp = Math.min(curr.lineTimestamp, firstWordTs);
+                    }
+
                     for (let w = 0; w < curr.words.length; w++) {
                         const currentWord = curr.words[w];
                         const nextWord = curr.words[w + 1];
+                        const safeWordTime = clamp(currentWord.timestamp, curr.lineTimestamp, curr.endTime - MIN_WORD_DURATION_SEC);
+                        currentWord.timestamp = safeWordTime;
                         const end = nextWord ? nextWord.timestamp : curr.endTime;
-                        currentWord.duration = clamp(end - currentWord.timestamp, 0.12, 2.2);
+                        currentWord.duration = clamp(end - currentWord.timestamp, MIN_WORD_DURATION_SEC, MAX_WORD_DURATION_SEC);
                     }
                 }
 
@@ -358,6 +416,13 @@
             this.currentLineIndex = -1;
             this.currentWords = [];
             this.singleLineEl = null;
+            this.timingProfile = {
+                hasEnhancedWords: false,
+                avgWordDuration: 0,
+                minWordDuration: 0,
+                maxWordDuration: 0,
+                wordCount: 0,
+            };
         }
 
         loadSyncedLRC(lrcText) {
@@ -384,10 +449,46 @@
             if (!lines.length) return;
             this.lines = lines;
 
+            const durations = [];
+            let hasEnhancedWords = false;
+            lines.forEach(line => {
+                if (line.hasEnhancedWords) {
+                    hasEnhancedWords = true;
+                }
+                (line.words || []).forEach(word => {
+                    if (Number.isFinite(word.duration) && word.duration > 0) {
+                        durations.push(word.duration);
+                    }
+                });
+            });
+
+            if (durations.length) {
+                const total = durations.reduce((sum, value) => sum + value, 0);
+                this.timingProfile = {
+                    hasEnhancedWords,
+                    avgWordDuration: total / durations.length,
+                    minWordDuration: Math.min(...durations),
+                    maxWordDuration: Math.max(...durations),
+                    wordCount: durations.length,
+                };
+            } else {
+                this.timingProfile = {
+                    hasEnhancedWords,
+                    avgWordDuration: 0,
+                    minWordDuration: 0,
+                    maxWordDuration: 0,
+                    wordCount: 0,
+                };
+            }
+
             this.singleLineEl = document.createElement('div');
             this.singleLineEl.className = 'okl-single-line';
             this.container.appendChild(this.singleLineEl);
             this.loaded = true;
+        }
+
+        getTimingProfile() {
+            return { ...this.timingProfile };
         }
 
         _lineIndexAt(time) {
@@ -457,7 +558,7 @@
 
             this.currentWords.forEach(wordEl => {
                 const timestamp = parseFloat(wordEl.dataset.timestamp || '0');
-                const duration = Math.max(0.1, parseFloat(wordEl.dataset.duration || '0.4'));
+                const duration = Math.max(MIN_WORD_DURATION_SEC, parseFloat(wordEl.dataset.duration || '0.3'));
                 const progress = clamp((time - timestamp) / duration, 0, 1);
 
                 wordEl.style.setProperty('--okl-progress', `${progress * 100}%`);

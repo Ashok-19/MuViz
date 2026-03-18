@@ -170,7 +170,7 @@
         gap: 0.22em;
         opacity: 0;
         transform: scale(0.96);
-        transition: opacity 220ms ease, transform 220ms ease;
+        transition: opacity 80ms linear, transform 80ms ease-out;
     }
 
     .okl-single-line.active {
@@ -183,7 +183,8 @@
         display: inline-block;
         white-space: pre;
         color: rgba(255, 247, 239, 0.34);
-        transition: color 140ms ease;
+        transition: color 45ms linear;
+        will-change: color;
     }
 
     .okl-word::after {
@@ -548,7 +549,7 @@
 <script src="https://cdn.jsdelivr.net/npm/butterchurn-presets@2.4.7/lib/butterchurnPresetsMD1.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/audiomotion-analyzer@4"></script>
 <!-- App scripts -->
-<script src="{% static 'js/presets.js' %}?v=20260318-uploadqueue2"></script>
-<script src="{% static 'js/open-karaoke-lyrics.js' %}?v=20260318-uploadqueue2"></script>
-<script src="{% static 'js/visualizer-engine.js' %}?v=20260318-uploadqueue2"></script>
+<script src="{% static 'js/presets.js' %}?v=20260318-lyrics-hotfix1"></script>
+<script src="{% static 'js/open-karaoke-lyrics.js' %}?v=20260318-lyrics-hotfix1"></script>
+<script src="{% static 'js/visualizer-engine.js' %}?v=20260318-lyrics-hotfix1"></script>
 {% endblock %}

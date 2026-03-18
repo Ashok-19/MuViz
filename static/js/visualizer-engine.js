@@ -78,6 +78,12 @@
         mode: 'milkdrop',
         milkdrop: null,
         mdCanvas: document.getElementById('milkdropCanvas'),
+        mdCanvasEventsBound: false,
+        mdContextLost: false,
+        mdRecovering: false,
+        mdRenderErrorStreak: 0,
+        mdLastRenderErrorAt: 0,
+        mdBadPresetNames: new Set(),
         mdPresets: {},
         mdPresetNames: [],
         mdCatalog: [],
@@ -113,6 +119,10 @@
         index: -1,
         active: false,
     };
+
+    function clamp(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+    }
 
     function safeReadJSON(key, fallback) {
         try {
@@ -599,14 +609,103 @@
     //  MILKDROP MODE (butterchurn)
     // ══════════════════════════════════════════════
 
+    function bindMilkdropCanvasRecovery() {
+        if (!engine.mdCanvas || engine.mdCanvasEventsBound) return;
+        engine.mdCanvasEventsBound = true;
+
+        engine.mdCanvas.addEventListener('webglcontextlost', event => {
+            event.preventDefault();
+            engine.mdContextLost = true;
+            stopMilkdropRender();
+            clearInterval(engine.mdCycleTimer);
+            showLyricsStatus('Visualizer context lost. Recovering...');
+            console.warn('Milkdrop WebGL context lost.');
+        });
+
+        engine.mdCanvas.addEventListener('webglcontextrestored', () => {
+            console.info('Milkdrop WebGL context restored.');
+            recoverMilkdropRenderer('context restored');
+        });
+    }
+
+    function findNextHealthyPresetIndex(startIndex = -1) {
+        if (!engine.mdPresetNames.length) return -1;
+
+        const length = engine.mdPresetNames.length;
+        for (let i = 1; i <= length; i += 1) {
+            const idx = ((startIndex + i) % length + length) % length;
+            const name = engine.mdPresetNames[idx];
+            if (!engine.mdBadPresetNames.has(name)) {
+                return idx;
+            }
+        }
+
+        return -1;
+    }
+
+    function recoverMilkdropRenderer(reason) {
+        if (engine.mdRecovering || !audioCtx || engine.mode !== 'milkdrop') return;
+
+        engine.mdRecovering = true;
+        stopMilkdropRender();
+        clearInterval(engine.mdCycleTimer);
+        engine.milkdrop = null;
+
+        window.setTimeout(() => {
+            try {
+                engine.mdContextLost = false;
+                initMilkdrop();
+                engine.mdRenderErrorStreak = 0;
+
+                if (!audioEl.paused && engine.milkdrop) {
+                    startMilkdropRender();
+                    resetCycleTimer();
+                }
+            } catch (error) {
+                console.error('Milkdrop recovery failed after ' + reason + ':', error);
+            } finally {
+                engine.mdRecovering = false;
+            }
+        }, 120);
+    }
+
+    function handleMilkdropRenderError(error) {
+        const now = performance.now();
+        if (now - engine.mdLastRenderErrorAt > 4500) {
+            engine.mdRenderErrorStreak = 0;
+        }
+        engine.mdLastRenderErrorAt = now;
+        engine.mdRenderErrorStreak += 1;
+
+        const activeName = engine.mdPresetNames[engine.mdCurrentIdx];
+        if (activeName) {
+            engine.mdBadPresetNames.add(activeName);
+        }
+
+        console.warn('Milkdrop render error #' + engine.mdRenderErrorStreak + (activeName ? ' on ' + activeName : ''), error);
+
+        if (engine.mdRenderErrorStreak >= 3) {
+            recoverMilkdropRenderer('repeated render errors');
+            return;
+        }
+
+        const fallbackIndex = findNextHealthyPresetIndex(engine.mdCurrentIdx);
+        if (fallbackIndex >= 0 && fallbackIndex !== engine.mdCurrentIdx) {
+            loadMilkdropPreset(fallbackIndex, 0.25, false);
+        }
+    }
+
     function initMilkdrop() {
-        if (engine.milkdrop || !audioCtx) return;
+        if (engine.milkdrop || !audioCtx || engine.mdContextLost) return;
         if (typeof butterchurn === 'undefined') {
             console.warn('butterchurn not loaded');
             return;
         }
 
         const canvas = engine.mdCanvas;
+        if (!canvas) return;
+        bindMilkdropCanvasRecovery();
+
         const dpr = window.devicePixelRatio || 1;
         canvas.width = window.innerWidth * dpr;
         canvas.height = window.innerHeight * dpr;
@@ -670,15 +769,38 @@
         }
     }
 
-    function loadMilkdropPreset(index, blendTime) {
+    function loadMilkdropPreset(index, blendTime, allowFallback = true) {
         if (!engine.milkdrop || engine.mdPresetNames.length === 0) return;
         const length = engine.mdPresetNames.length;
         const safeIndex = ((index % length) + length) % length;
-        engine.mdCurrentIdx = safeIndex;
         const name = engine.mdPresetNames[safeIndex];
+
+        if (engine.mdBadPresetNames.has(name)) {
+            if (allowFallback) {
+                const fallbackIndex = findNextHealthyPresetIndex(safeIndex);
+                if (fallbackIndex >= 0 && fallbackIndex !== safeIndex) {
+                    loadMilkdropPreset(fallbackIndex, blendTime, false);
+                }
+            }
+            return;
+        }
+
         const preset = engine.mdPresets[name];
-        if (preset) {
+        if (!preset) return;
+
+        try {
             engine.milkdrop.loadPreset(preset, blendTime);
+            engine.mdCurrentIdx = safeIndex;
+        } catch (error) {
+            console.warn('Skipping unstable Milkdrop preset:', name, error);
+            engine.mdBadPresetNames.add(name);
+            if (allowFallback) {
+                const fallbackIndex = findNextHealthyPresetIndex(safeIndex);
+                if (fallbackIndex >= 0 && fallbackIndex !== safeIndex) {
+                    loadMilkdropPreset(fallbackIndex, Math.max(0.2, blendTime || 0), false);
+                }
+            }
+            return;
         }
 
         document.querySelectorAll('.md-preset-item').forEach(item => {
@@ -714,12 +836,16 @@
         const pool = getPresetPoolIndices();
         if (!pool.length) return -1;
 
-        const weightedEntries = pool.map(index => {
+        const weightedEntries = pool
+            .filter(index => !engine.mdBadPresetNames.has(engine.mdPresetNames[index]))
+            .map(index => {
             const catalogEntry = engine.mdCatalog.find(entry => entry.index === index);
             const score = catalogEntry ? catalogEntry.score : 50;
             const weight = Math.max(1, Math.pow((score + 12) / 20, 1.4));
             return { index, weight };
         });
+
+        if (!weightedEntries.length) return -1;
 
         const totalWeight = weightedEntries.reduce((sum, entry) => sum + entry.weight, 0);
         let roll = Math.random() * totalWeight;
@@ -755,31 +881,41 @@
     }
 
     function renderMilkdrop() {
-        if (engine.mode !== 'milkdrop' || !engine.milkdrop || audioEl.paused) {
+        if (engine.mode !== 'milkdrop' || !engine.milkdrop || audioEl.paused || engine.mdContextLost || engine.mdRecovering) {
             engine.mdAnimFrame = null;
             return;
         }
 
-        const metrics = updateReactiveMetrics();
-        if (engine.mdBeatReactive && metrics.isBeat) {
-            const elapsed = metrics.now - engine.mdBeatLastSwitchAt;
-            const cooldown = engine.mdBeatSwitchCooldownMs * (1.25 - Math.min(engine.mdBeatSensitivity, 1.5) * 0.3);
-            if (elapsed >= cooldown) {
-                const dynamicBlend = Math.max(0.3, engine.mdBlendTime * 0.72);
-                const nextIndex = pickWeightedRandomPresetIndex();
-                if (nextIndex >= 0) {
-                    loadMilkdropPreset(nextIndex, dynamicBlend);
-                    engine.mdBeatLastSwitchAt = metrics.now;
+        try {
+            const metrics = updateReactiveMetrics();
+            if (engine.mdBeatReactive && metrics.isBeat) {
+                const elapsed = metrics.now - engine.mdBeatLastSwitchAt;
+                const cooldown = engine.mdBeatSwitchCooldownMs * (1.25 - Math.min(engine.mdBeatSensitivity, 1.5) * 0.3);
+                if (elapsed >= cooldown) {
+                    const dynamicBlend = Math.max(0.3, engine.mdBlendTime * 0.72);
+                    const nextIndex = pickWeightedRandomPresetIndex();
+                    if (nextIndex >= 0) {
+                        loadMilkdropPreset(nextIndex, dynamicBlend);
+                        engine.mdBeatLastSwitchAt = metrics.now;
+                    }
                 }
             }
-        }
 
-        engine.milkdrop.render();
-        engine.mdAnimFrame = requestAnimationFrame(renderMilkdrop);
+            engine.milkdrop.render();
+            engine.mdRenderErrorStreak = 0;
+        } catch (error) {
+            handleMilkdropRenderError(error);
+        } finally {
+            if (engine.mode === 'milkdrop' && engine.milkdrop && !audioEl.paused && !engine.mdContextLost && !engine.mdRecovering) {
+                engine.mdAnimFrame = requestAnimationFrame(renderMilkdrop);
+            } else {
+                engine.mdAnimFrame = null;
+            }
+        }
     }
 
     function startMilkdropRender() {
-        if (engine.mdAnimFrame || audioEl.paused || engine.mode !== 'milkdrop' || !engine.milkdrop) return;
+        if (engine.mdAnimFrame || audioEl.paused || engine.mode !== 'milkdrop' || !engine.milkdrop || engine.mdContextLost || engine.mdRecovering) return;
         engine.mdAnimFrame = requestAnimationFrame(renderMilkdrop);
     }
 
@@ -810,6 +946,7 @@
             if (profile && entry.score < profile.minScore) return;
             if (engine.mdFavoritesOnly && !entry.isFavorite) return;
             if (filterText && !name.toLowerCase().includes(filterText)) return;
+            if (engine.mdBadPresetNames.has(name)) return;
 
             engine.mdVisiblePresetIndices.push(entry.index);
 
@@ -937,7 +1074,8 @@
         synced: false,
         renderer: null,
         rafId: null,
-        syncAdvanceSec: 0.12,
+        lastMediaTime: Number.NaN,
+        lastPerfNow: Number.NaN,
     };
 
     if (window.OpenKaraokeLyricsDisplay && lyricsDisplay) {
@@ -981,9 +1119,14 @@
         if (!trackId) return;
 
         const cached = getCachedLyricsAvailability(trackId);
-        if (cached !== null) {
-            applyLyricsAvailability(cached);
+        if (cached === true) {
+            applyLyricsAvailability(true);
             return;
+        }
+
+        if (cached === false) {
+            applyLyricsAvailability(false);
+            // Revalidate cached misses in case a prior client-side error wrote a stale false.
         }
 
         try {
@@ -1012,6 +1155,65 @@
                 lyricsStatus.classList.remove('visible');
             }, timeout);
         }
+    }
+
+    function resetLyricsClock() {
+        lyrics.lastMediaTime = Number.NaN;
+        lyrics.lastPerfNow = Number.NaN;
+    }
+
+    function getPreciseLyricsTime() {
+        const mediaTime = Number(audioEl.currentTime);
+        if (!Number.isFinite(mediaTime)) return 0;
+
+        const now = performance.now();
+
+        // When paused, seeking, or ended — return raw audio time.
+        if (audioEl.paused || audioEl.seeking || audioEl.ended) {
+            lyrics.lastMediaTime = mediaTime;
+            lyrics.lastPerfNow = now;
+            return Math.max(0, mediaTime);
+        }
+
+        const playbackRate = Math.max(0.25, Number(audioEl.playbackRate) || 1);
+
+        // Sub-frame interpolation: between timeupdate events (~4Hz), use
+        // performance.now() to estimate the current position, but always
+        // anchor tightly to the real audio time.
+        if (Number.isFinite(lyrics.lastMediaTime) && Number.isFinite(lyrics.lastPerfNow)) {
+            const perfElapsed = (now - lyrics.lastPerfNow) / 1000;
+
+            // Large jump (seek, stall, tab-switch) — snap immediately.
+            if (perfElapsed > 0.5 || Math.abs(mediaTime - lyrics.lastMediaTime) > 0.5) {
+                lyrics.lastMediaTime = mediaTime;
+                lyrics.lastPerfNow = now;
+                return Math.max(0, mediaTime);
+            }
+
+            const interpolated = lyrics.lastMediaTime + perfElapsed * playbackRate;
+
+            // Clamp: never drift more than 20ms ahead of actual audio time.
+            const MAX_AHEAD = 0.02;
+            const clamped = Math.min(interpolated, mediaTime + MAX_AHEAD);
+
+            // Re-anchor when new audio time arrives (timeupdate fired).
+            if (Math.abs(mediaTime - lyrics.lastMediaTime) > 0.001) {
+                lyrics.lastMediaTime = mediaTime;
+                lyrics.lastPerfNow = now;
+            }
+
+            return Math.max(0, clamped);
+        }
+
+        // First frame — seed the anchor.
+        lyrics.lastMediaTime = mediaTime;
+        lyrics.lastPerfNow = now;
+        return Math.max(0, mediaTime);
+    }
+
+    function syncLyricsToNow() {
+        if (!lyrics.active || !lyrics.available || !lyrics.renderer) return;
+        lyrics.renderer.update(getPreciseLyricsTime());
     }
 
     async function fetchLyrics() {
@@ -1047,6 +1249,7 @@
             }
 
             lyrics.renderer.loadSyncedLRC(lrcText);
+            resetLyricsClock();
             lyrics.synced = true;
             lyrics.available = true;
             lyrics.availabilityChecked = true;
@@ -1073,7 +1276,7 @@
             }
 
             if (lyrics.available) {
-                lyrics.renderer.update(Math.max(0, audioEl.currentTime + lyrics.syncAdvanceSec));
+                lyrics.renderer.update(getPreciseLyricsTime());
             }
 
             lyrics.rafId = window.requestAnimationFrame(tick);
@@ -1103,8 +1306,10 @@
         lyricsBtn.classList.toggle('active', lyrics.active);
 
         if (lyrics.active) {
+            resetLyricsClock();
             fetchLyrics();
             startLyricsSync();
+            syncLyricsToNow();
         } else {
             stopLyricsSync();
         }
@@ -1266,6 +1471,8 @@
     audioEl.addEventListener('play', () => {
         playBtn.textContent = '⏸';
         syncVisualizerPlayback();
+        resetLyricsClock();
+        syncLyricsToNow();
     });
 
     audioEl.addEventListener('pause', () => {
@@ -1286,6 +1493,24 @@
         syncDurationUI();
         currentTimeEl.textContent = formatTime(audioEl.currentTime);
         seekBar.value = audioEl.currentTime;
+    });
+
+    audioEl.addEventListener('seeking', () => {
+        resetLyricsClock();
+    });
+
+    audioEl.addEventListener('seeked', () => {
+        resetLyricsClock();
+        syncLyricsToNow();
+    });
+
+    audioEl.addEventListener('ratechange', () => {
+        resetLyricsClock();
+        syncLyricsToNow();
+    });
+
+    audioEl.addEventListener('waiting', () => {
+        resetLyricsClock();
     });
 
     seekBar.addEventListener('input', () => {
@@ -1447,7 +1672,12 @@
             const dpr = window.devicePixelRatio || 1;
             engine.mdCanvas.width = window.innerWidth * dpr;
             engine.mdCanvas.height = window.innerHeight * dpr;
-            engine.milkdrop.setRendererSize(engine.mdCanvas.width, engine.mdCanvas.height);
+            try {
+                engine.milkdrop.setRendererSize(engine.mdCanvas.width, engine.mdCanvas.height);
+            } catch (error) {
+                console.warn('Milkdrop resize failed, attempting recovery:', error);
+                recoverMilkdropRenderer('resize failure');
+            }
         }
     });
 
