@@ -1075,6 +1075,7 @@
         renderer: null,
         rafId: null,
         lastMediaTime: Number.NaN,
+        lastPerfNow: Number.NaN,
     };
 
     if (window.OpenKaraokeLyricsDisplay && lyricsDisplay) {
@@ -1158,41 +1159,56 @@
 
     function resetLyricsClock() {
         lyrics.lastMediaTime = Number.NaN;
-    }
-
-    function getLyricsLatencyCompensation() {
-        if (!audioCtx) return 0;
-
-        // Keep visual lyrics aligned with audible output, not just the media clock.
-        const baseLatency = Number(audioCtx.baseLatency) || 0;
-        const outputLatency = Number(audioCtx.outputLatency) || 0;
-        return clamp(baseLatency + outputLatency, 0, 0.18);
+        lyrics.lastPerfNow = Number.NaN;
     }
 
     function getPreciseLyricsTime() {
         const mediaTime = Number(audioEl.currentTime);
         if (!Number.isFinite(mediaTime)) return 0;
 
-        const correctedTime = Math.max(0, mediaTime - getLyricsLatencyCompensation());
+        const now = performance.now();
 
-        // When paused, seeking, or ended, snap directly to the corrected media time.
+        // When paused, seeking, or ended — return raw audio time.
         if (audioEl.paused || audioEl.seeking || audioEl.ended) {
-            lyrics.lastMediaTime = correctedTime;
-            return correctedTime;
+            lyrics.lastMediaTime = mediaTime;
+            lyrics.lastPerfNow = now;
+            return Math.max(0, mediaTime);
         }
 
-        if (Number.isFinite(lyrics.lastMediaTime)) {
-            const delta = correctedTime - lyrics.lastMediaTime;
+        const playbackRate = Math.max(0.25, Number(audioEl.playbackRate) || 1);
 
-            // If playback jumps around, resync immediately instead of carrying drift.
-            if (Math.abs(delta) > 0.35) {
-                lyrics.lastMediaTime = correctedTime;
-                return correctedTime;
+        // Sub-frame interpolation: between timeupdate events (~4Hz), use
+        // performance.now() to estimate the current position, but always
+        // anchor tightly to the real audio time.
+        if (Number.isFinite(lyrics.lastMediaTime) && Number.isFinite(lyrics.lastPerfNow)) {
+            const perfElapsed = (now - lyrics.lastPerfNow) / 1000;
+
+            // Large jump (seek, stall, tab-switch) — snap immediately.
+            if (perfElapsed > 0.5 || Math.abs(mediaTime - lyrics.lastMediaTime) > 0.5) {
+                lyrics.lastMediaTime = mediaTime;
+                lyrics.lastPerfNow = now;
+                return Math.max(0, mediaTime);
             }
+
+            const interpolated = lyrics.lastMediaTime + perfElapsed * playbackRate;
+
+            // Clamp: never drift more than 20ms ahead of actual audio time.
+            const MAX_AHEAD = 0.02;
+            const clamped = Math.min(interpolated, mediaTime + MAX_AHEAD);
+
+            // Re-anchor when new audio time arrives (timeupdate fired).
+            if (Math.abs(mediaTime - lyrics.lastMediaTime) > 0.001) {
+                lyrics.lastMediaTime = mediaTime;
+                lyrics.lastPerfNow = now;
+            }
+
+            return Math.max(0, clamped);
         }
 
-        lyrics.lastMediaTime = correctedTime;
-        return correctedTime;
+        // First frame — seed the anchor.
+        lyrics.lastMediaTime = mediaTime;
+        lyrics.lastPerfNow = now;
+        return Math.max(0, mediaTime);
     }
 
     function syncLyricsToNow() {
