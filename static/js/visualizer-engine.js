@@ -1165,49 +1165,6 @@
     function getPreciseLyricsTime() {
         const mediaTime = Number(audioEl.currentTime);
         if (!Number.isFinite(mediaTime)) return 0;
-
-        const now = performance.now();
-
-        // When paused, seeking, or ended — return raw audio time.
-        if (audioEl.paused || audioEl.seeking || audioEl.ended) {
-            lyrics.lastMediaTime = mediaTime;
-            lyrics.lastPerfNow = now;
-            return Math.max(0, mediaTime);
-        }
-
-        const playbackRate = Math.max(0.25, Number(audioEl.playbackRate) || 1);
-
-        // Sub-frame interpolation: between timeupdate events (~4Hz), use
-        // performance.now() to estimate the current position, but always
-        // anchor tightly to the real audio time.
-        if (Number.isFinite(lyrics.lastMediaTime) && Number.isFinite(lyrics.lastPerfNow)) {
-            const perfElapsed = (now - lyrics.lastPerfNow) / 1000;
-
-            // Large jump (seek, stall, tab-switch) — snap immediately.
-            if (perfElapsed > 0.5 || Math.abs(mediaTime - lyrics.lastMediaTime) > 0.5) {
-                lyrics.lastMediaTime = mediaTime;
-                lyrics.lastPerfNow = now;
-                return Math.max(0, mediaTime);
-            }
-
-            const interpolated = lyrics.lastMediaTime + perfElapsed * playbackRate;
-
-            // Clamp: never drift more than 20ms ahead of actual audio time.
-            const MAX_AHEAD = 0.02;
-            const clamped = Math.min(interpolated, mediaTime + MAX_AHEAD);
-
-            // Re-anchor when new audio time arrives (timeupdate fired).
-            if (Math.abs(mediaTime - lyrics.lastMediaTime) > 0.001) {
-                lyrics.lastMediaTime = mediaTime;
-                lyrics.lastPerfNow = now;
-            }
-
-            return Math.max(0, clamped);
-        }
-
-        // First frame — seed the anchor.
-        lyrics.lastMediaTime = mediaTime;
-        lyrics.lastPerfNow = now;
         return Math.max(0, mediaTime);
     }
 

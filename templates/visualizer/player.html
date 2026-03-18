@@ -167,15 +167,32 @@
         flex-wrap: wrap;
         align-items: center;
         justify-content: center;
-        gap: 0.22em;
+        gap: 0.2em;
         opacity: 0;
-        transform: scale(0.96);
-        transition: opacity 80ms linear, transform 80ms ease-out;
+        transform: translateY(10px) scale(0.985);
+        transition: opacity 140ms linear, transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
     }
 
     .okl-single-line.active {
         opacity: 1;
-        transform: scale(1);
+        transform: translateY(0) scale(1);
+    }
+
+    .okl-single-line.line-enter {
+        animation: lyricLineIn 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+
+    @keyframes lyricLineIn {
+        0% {
+            opacity: 0;
+            transform: translateY(14px) scale(0.975);
+            filter: blur(1.5px);
+        }
+        100% {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+            filter: blur(0);
+        }
     }
 
     .okl-word {
@@ -183,8 +200,8 @@
         display: inline-block;
         white-space: pre;
         color: rgba(255, 247, 239, 0.34);
-        transition: color 45ms linear;
-        will-change: color;
+        transition: color 80ms linear, transform 120ms ease, filter 120ms ease;
+        will-change: color, transform;
     }
 
     .okl-word::after {
@@ -198,11 +215,17 @@
         text-shadow:
             0 0 12px rgba(255, 193, 150, 0.7),
             0 0 30px rgba(193,95,60,0.4);
+        transition: width 56ms linear;
     }
 
     .okl-word.active,
     .okl-word.past {
         color: rgba(255, 247, 239, 0.65);
+    }
+
+    .okl-word.focus {
+        transform: translateY(-0.04em) scale(1.035);
+        filter: drop-shadow(0 0 8px rgba(255, 200, 165, 0.35));
     }
 
     .okl-line-instrumental {
@@ -548,8 +571,9 @@
 <script src="https://cdn.jsdelivr.net/npm/butterchurn-presets@2.4.7/lib/butterchurnPresetsExtra2.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/butterchurn-presets@2.4.7/lib/butterchurnPresetsMD1.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/audiomotion-analyzer@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/liricle@4.2.0/dist/liricle.min.js"></script>
 <!-- App scripts -->
 <script src="{% static 'js/presets.js' %}?v=20260318-lyrics-hotfix1"></script>
-<script src="{% static 'js/open-karaoke-lyrics.js' %}?v=20260318-lyrics-hotfix1"></script>
-<script src="{% static 'js/visualizer-engine.js' %}?v=20260318-lyrics-hotfix1"></script>
+<script src="{% static 'js/github-lyric-sync.js' %}?v=20260319-liricle-engine5"></script>
+<script src="{% static 'js/visualizer-engine.js' %}?v=20260319-lyric-sync-engine1"></script>
 {% endblock %}

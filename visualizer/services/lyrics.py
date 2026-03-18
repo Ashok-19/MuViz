@@ -14,11 +14,14 @@ class ResolvedLyrics:
 
 class LyricsService:
     USER_AGENT = 'MuViz/1.0 (+https://github.com/)'
+    SYNC_CACHE_PREFIX = '[source:MuViz-synced:'
 
     @classmethod
     def get_for_track(cls, track) -> ResolvedLyrics | None:
-        if track.lyrics_lrc:
-            return ResolvedLyrics(lrc=track.lyrics_lrc, synced=True, provider='cache')
+        cached_lrc = (track.lyrics_lrc or '').strip()
+        cached_provider = cls.read_cached_synced_provider(cached_lrc)
+        if cached_provider:
+            return ResolvedLyrics(lrc=cached_lrc, synced=True, provider='cache')
 
         title, artist = cls.infer_title_artist(track.title, track.artist)
         if not title:
@@ -28,11 +31,42 @@ class LyricsService:
         if not resolved:
             resolved = cls.fetch_from_syncedlyrics(title, artist, track.duration)
         if not resolved:
+            if cached_lrc and not cached_provider:
+                # Drop untrusted historical cache entries that were generated without
+                # provider-verified sync metadata, so they cannot cause drift.
+                track.lyrics_lrc = ''
+                track.save(update_fields=['lyrics_lrc'])
             return None
 
-        track.lyrics_lrc = resolved.lrc
-        track.save(update_fields=['lyrics_lrc'])
-        return resolved
+        marked_lrc = cls.mark_synced_cache(resolved.lrc, resolved.provider)
+        if track.lyrics_lrc != marked_lrc:
+            track.lyrics_lrc = marked_lrc
+            track.save(update_fields=['lyrics_lrc'])
+
+        return ResolvedLyrics(lrc=marked_lrc, synced=True, provider=resolved.provider)
+
+    @classmethod
+    def read_cached_synced_provider(cls, lrc: str) -> str | None:
+        if not lrc:
+            return None
+        first_line = lrc.splitlines()[0].strip()
+        if not first_line.startswith(cls.SYNC_CACHE_PREFIX) or not first_line.endswith(']'):
+            return None
+        provider = first_line[len(cls.SYNC_CACHE_PREFIX):-1].strip()
+        return provider or None
+
+    @classmethod
+    def mark_synced_cache(cls, lrc: str, provider: str) -> str:
+        safe_lrc = (lrc or '').strip()
+        if not safe_lrc:
+            return ''
+
+        existing_provider = cls.read_cached_synced_provider(safe_lrc)
+        if existing_provider:
+            return safe_lrc
+
+        safe_provider = re.sub(r'[^a-z0-9_\-]+', '-', (provider or 'unknown').lower()).strip('-') or 'unknown'
+        return f'{cls.SYNC_CACHE_PREFIX}{safe_provider}]\n{safe_lrc}'
 
     @classmethod
     def infer_title_artist(cls, raw_title: str, raw_artist: str) -> tuple[str, str]:
@@ -87,12 +121,7 @@ class LyricsService:
         synced = (candidate.get('syncedLyrics') or '').strip()
         if synced:
             return ResolvedLyrics(lrc=synced, synced=True, provider='lrclib')
-
-        plain = (candidate.get('plainLyrics') or '').strip()
-        if not plain:
-            return None
-        estimated = cls.estimate_lrc(plain, duration or candidate.get('duration'))
-        return ResolvedLyrics(lrc=estimated, synced=False, provider='lrclib')
+        return None
 
     @classmethod
     def fetch_from_syncedlyrics(cls, title: str, artist: str, duration: float | None) -> ResolvedLyrics | None:
@@ -104,14 +133,6 @@ class LyricsService:
             synced = syncedlyrics.search(search_term, synced_only=True)
             if synced:
                 return ResolvedLyrics(lrc=synced, synced=True, provider='syncedlyrics')
-
-            plain = syncedlyrics.search(search_term, plain_only=True)
-            if plain:
-                return ResolvedLyrics(
-                    lrc=cls.estimate_lrc(plain, duration),
-                    synced=False,
-                    provider='syncedlyrics',
-                )
         except Exception:
             return None
         return None

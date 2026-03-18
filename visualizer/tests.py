@@ -101,7 +101,8 @@ class PlayerPageTests(TestCase):
         self.assertContains(response, 'id="lyricsDisplay"')
         self.assertContains(response, 'id="prevTrackBtn"')
         self.assertContains(response, 'id="nextTrackBtn"')
-        self.assertContains(response, 'open-karaoke-lyrics.js')
+        self.assertContains(response, 'liricle')
+        self.assertContains(response, 'github-lyric-sync.js')
 
     def test_player_shows_preview_warning_when_track_is_preview_only(self):
         track = Track.objects.create(
