@@ -28,14 +28,14 @@
             <div class="drop-zone" id="dropZone">
                 <div class="drop-backdrop"></div>
                 <span class="drop-icon">♪</span>
-                <div class="drop-text">Drop audio here</div>
-                <div class="drop-subtext">or choose a file</div>
+                <div class="drop-text">Drop audio files here</div>
+                <div class="drop-subtext">or choose up to 10 files</div>
                 <div class="drop-action">
                     <span class="drop-action-pill">Choose File</span>
-                    <span class="drop-action-hint">Max 50 MB</span>
+                    <span class="drop-action-hint">Max 50 MB each</span>
                 </div>
                 <div class="drop-formats">MP3 WAV FLAC AAC M4A OGG WEBM</div>
-                <input type="file" id="fileInput" accept=".mp3,.wav,.ogg,.flac,.aac,.m4a,.webm" hidden>
+                <input type="file" id="fileInput" accept=".mp3,.wav,.ogg,.flac,.aac,.m4a,.webm" multiple hidden>
             </div>
 
             <div class="selected-file" id="selectedFile" hidden>
@@ -81,5 +81,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{% static 'js/app.js' %}"></script>
+<script src="{% static 'js/app.js' %}?v=20260318-queuefix1"></script>
 {% endblock %}

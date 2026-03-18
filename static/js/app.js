@@ -33,7 +33,12 @@
         setTimeout(() => toast.classList.remove('show'), 3500);
     }
 
-    // ── File Upload ───────────────────────────────
+    // ── Upload + Queue + Lyrics Prefetch ─────────
+    const MAX_QUEUE_FILES = 10;
+    const MAX_PERSISTED_QUEUE = 50;
+    const QUEUE_STORAGE_KEY = 'muviz-play-queue';
+    const LYRICS_STATUS_STORAGE_KEY = 'muviz-lyrics-status';
+
     const dropZone = document.getElementById('dropZone');
     const fileInput = document.getElementById('fileInput');
     const uploadProgress = document.getElementById('uploadProgress');
@@ -47,16 +52,224 @@
     const linkSubmit = document.getElementById('linkSubmit');
     const linkStatus = document.getElementById('linkStatus');
 
+    function safeReadJSON(key, fallback) {
+        try {
+            const raw = sessionStorage.getItem(key);
+            if (!raw) return fallback;
+            const parsed = JSON.parse(raw);
+            return parsed && typeof parsed === 'object' ? parsed : fallback;
+        } catch (_) {
+            return fallback;
+        }
+    }
+
+    function safeWriteJSON(key, value) {
+        try {
+            sessionStorage.setItem(key, JSON.stringify(value));
+        } catch (_) {
+            // No-op if storage is unavailable.
+        }
+    }
+
+    function updateLyricsStatusCache(trackId, available) {
+        const map = safeReadJSON(LYRICS_STATUS_STORAGE_KEY, {});
+        map[String(trackId)] = !!available;
+        safeWriteJSON(LYRICS_STATUS_STORAGE_KEY, map);
+    }
+
+    function normalizeQueueTrack(track) {
+        if (!track || track.id === undefined || track.id === null) return null;
+        return {
+            id: Number(track.id),
+            title: track.title || 'Unknown Track',
+            artist: track.artist || '',
+            source: track.source || 'upload',
+        };
+    }
+
+    function persistQueue(tracks, options = {}) {
+        const append = options.append !== false;
+        const incoming = (tracks || [])
+            .map(normalizeQueueTrack)
+            .filter(Boolean);
+
+        const existingQueue = safeReadJSON(QUEUE_STORAGE_KEY, {});
+        const existingTracks = Array.isArray(existingQueue.tracks)
+            ? existingQueue.tracks.map(normalizeQueueTrack).filter(Boolean)
+            : [];
+
+        const merged = append ? existingTracks.concat(incoming) : incoming;
+        const deduped = [];
+        const seen = new Set();
+
+        for (let i = merged.length - 1; i >= 0; i -= 1) {
+            const track = merged[i];
+            if (!track || seen.has(track.id)) continue;
+            seen.add(track.id);
+            deduped.push(track);
+        }
+
+        deduped.reverse();
+        const finalTracks = deduped.slice(-MAX_PERSISTED_QUEUE);
+
+        safeWriteJSON(QUEUE_STORAGE_KEY, {
+            tracks: finalTracks,
+            createdAt: Date.now(),
+        });
+
+        return finalTracks;
+    }
+
+    function updateProgress(percent, text) {
+        uploadProgress.classList.add('active');
+        progressFill.style.width = Math.max(0, Math.min(100, percent)) + '%';
+        progressText.textContent = text;
+    }
+
+    function trimQueueFiles(files) {
+        const all = Array.from(files || []);
+        if (all.length <= MAX_QUEUE_FILES) return all;
+        showToast('Only the first ' + MAX_QUEUE_FILES + ' files were kept for queue upload.');
+        return all.slice(0, MAX_QUEUE_FILES);
+    }
+
+    function showSelectedFiles(files) {
+        if (!files.length) return;
+        selectedFile.hidden = false;
+
+        if (files.length === 1) {
+            selectedFileName.textContent = files[0].name;
+            selectedFileMeta.textContent = formatFileSize(files[0].size) + ' • Preparing upload';
+            return;
+        }
+
+        const totalBytes = files.reduce((sum, file) => sum + (file.size || 0), 0);
+        selectedFileName.textContent = files.length + ' tracks selected';
+        selectedFileMeta.textContent = formatFileSize(totalBytes) + ' total • Queue mode';
+    }
+
+    async function uploadSingleFile(file) {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const response = await fetch('/api/upload/', {
+            method: 'POST',
+            body: formData,
+        });
+
+        let payload = {};
+        try {
+            payload = await response.json();
+        } catch (_) {
+            payload = {};
+        }
+
+        if (!response.ok) {
+            throw new Error(payload.error || 'Upload failed for ' + file.name);
+        }
+
+        return payload;
+    }
+
+    async function resolveLyricsAvailability(trackId) {
+        try {
+            const response = await fetch('/api/lyrics/' + trackId + '/', {
+                headers: { Accept: 'application/json' },
+            });
+
+            if (!response.ok) return { available: false };
+            const payload = await response.json();
+            return { available: !!payload.available };
+        } catch (_) {
+            return { available: false };
+        }
+    }
+
+    async function uploadFiles(filesInput) {
+        const files = trimQueueFiles(filesInput);
+        if (!files.length) return;
+
+        showSelectedFiles(files);
+
+        const uploadedTracks = [];
+        const missingLyrics = [];
+        const totalSteps = files.length * 2;
+
+        for (let i = 0; i < files.length; i += 1) {
+            const file = files[i];
+            const stepBase = i * 2;
+
+            updateProgress((stepBase / totalSteps) * 100, 'Uploading ' + (i + 1) + '/' + files.length + ': ' + file.name);
+            selectedFileMeta.textContent = formatFileSize(file.size) + ' • Uploading';
+            const track = await uploadSingleFile(file);
+
+            updateProgress(((stepBase + 1) / totalSteps) * 100, 'Checking lyrics ' + (i + 1) + '/' + files.length + '...');
+            const lyrics = typeof track.lyrics_available === 'boolean'
+                ? { available: track.lyrics_available }
+                : await resolveLyricsAvailability(track.id);
+            updateLyricsStatusCache(track.id, lyrics.available);
+
+            if (!lyrics.available) {
+                missingLyrics.push(track.title || file.name);
+            }
+
+            uploadedTracks.push({
+                id: track.id,
+                title: track.title,
+                artist: track.artist,
+                source: track.source,
+                lyricsAvailable: lyrics.available,
+            });
+
+            selectedFileMeta.textContent = (i + 1) + '/' + files.length + ' queued';
+            updateProgress(((stepBase + 2) / totalSteps) * 100, 'Prepared ' + (i + 1) + '/' + files.length + ' tracks');
+        }
+
+        persistQueue(uploadedTracks, { append: true });
+
+        if (missingLyrics.length) {
+            const message = missingLyrics.length === 1
+                ? 'Lyrics are not available for: ' + missingLyrics[0]
+                : 'Lyrics are not available for ' + missingLyrics.length + ' queued tracks';
+            showToast(message);
+        }
+
+        updateProgress(100, 'Opening queue player...');
+        window.location.href = '/play/' + uploadedTracks[0].id + '/';
+    }
+
     dropZone.addEventListener('click', () => fileInput.click());
-    dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+    dropZone.addEventListener('dragover', e => {
+        e.preventDefault();
+        dropZone.classList.add('dragover');
+    });
     dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
-    dropZone.addEventListener('drop', e => {
+    dropZone.addEventListener('drop', async e => {
         e.preventDefault();
         dropZone.classList.remove('dragover');
-        if (e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0]);
+        if (!e.dataTransfer.files.length) return;
+
+        try {
+            await uploadFiles(e.dataTransfer.files);
+        } catch (error) {
+            showToast(error.message || 'Queue upload failed');
+            uploadProgress.classList.remove('active');
+            selectedFileMeta.textContent = 'Upload failed';
+        }
     });
-    fileInput.addEventListener('change', () => {
-        if (fileInput.files.length) uploadFile(fileInput.files[0]);
+
+    fileInput.addEventListener('change', async () => {
+        if (!fileInput.files.length) return;
+
+        try {
+            await uploadFiles(fileInput.files);
+        } catch (error) {
+            showToast(error.message || 'Queue upload failed');
+            uploadProgress.classList.remove('active');
+            selectedFileMeta.textContent = 'Upload failed';
+        } finally {
+            fileInput.value = '';
+        }
     });
 
     function formatFileSize(bytes) {
@@ -70,54 +283,6 @@
         }
         const precision = unitIndex === 0 ? 0 : 1;
         return `${size.toFixed(precision)} ${units[unitIndex]}`;
-    }
-
-    function uploadFile(file) {
-        selectedFile.hidden = false;
-        selectedFileName.textContent = file.name;
-        selectedFileMeta.textContent = `${formatFileSize(file.size)} • Preparing upload`;
-
-        const formData = new FormData();
-        formData.append('file', file);
-
-        uploadProgress.classList.add('active');
-        progressFill.style.width = '0%';
-        progressText.textContent = 'Uploading...';
-
-        const xhr = new XMLHttpRequest();
-        xhr.open('POST', '/api/upload/');
-
-        xhr.upload.onprogress = e => {
-            if (e.lengthComputable) {
-                const pct = Math.round((e.loaded / e.total) * 100);
-                progressFill.style.width = pct + '%';
-                progressText.textContent = pct + '%';
-                selectedFileMeta.textContent = `${formatFileSize(file.size)} • ${pct}% uploaded`;
-            }
-        };
-
-        xhr.onload = () => {
-            if (xhr.status === 200) {
-                const data = JSON.parse(xhr.responseText);
-                progressText.textContent = 'Redirecting...';
-                progressFill.style.width = '100%';
-                selectedFileMeta.textContent = `${formatFileSize(file.size)} • Upload complete`;
-                window.location.href = '/play/' + data.id + '/';
-            } else {
-                const err = JSON.parse(xhr.responseText);
-                showToast(err.error || 'Upload failed');
-                uploadProgress.classList.remove('active');
-                selectedFileMeta.textContent = `${formatFileSize(file.size)} • Upload failed`;
-            }
-        };
-
-        xhr.onerror = () => {
-            showToast('Network error during upload');
-            uploadProgress.classList.remove('active');
-            selectedFileMeta.textContent = `${formatFileSize(file.size)} • Network error`;
-        };
-
-        xhr.send(formData);
     }
 
     if (linkForm && linkInput && linkSubmit && linkStatus) {
@@ -142,13 +307,27 @@
                     throw new Error(data.error || 'Link import failed');
                 }
 
-                if (data.preview_only) {
-                    linkStatus.textContent = 'Preview only. Opening player...';
+                linkStatus.textContent = data.preview_only
+                    ? 'Preview only source detected. Checking lyrics...'
+                    : 'Audio ready. Checking lyrics...';
+
+                const lyrics = typeof data.lyrics_available === 'boolean'
+                    ? { available: data.lyrics_available }
+                    : await resolveLyricsAvailability(data.id);
+                updateLyricsStatusCache(data.id, lyrics.available);
+                persistQueue([{
+                    id: data.id,
+                    title: data.title,
+                    artist: data.artist,
+                    source: data.source,
+                }], { append: true });
+
+                if (!lyrics.available) {
+                    linkStatus.textContent = 'Lyrics are not available for this track. Opening player...';
                 } else {
-                    linkStatus.textContent = data.streamed
-                        ? 'Link ready. Opening player...'
-                        : 'Audio cached. Opening player...';
+                    linkStatus.textContent = 'Lyrics ready. Opening player...';
                 }
+
                 window.location.href = '/play/' + data.id + '/';
             } catch (error) {
                 linkStatus.textContent = error.message || 'Link import failed';

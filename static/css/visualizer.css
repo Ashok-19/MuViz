@@ -139,6 +139,20 @@
 .ctrl-btn.active {
     color: var(--accent);
 }
+.ctrl-btn.disabled,
+.ctrl-btn:disabled {
+    color: rgba(120, 120, 120, 0.55);
+    background: rgba(0, 0, 0, 0.82);
+    border: 1px solid rgba(32, 32, 32, 0.95);
+    cursor: not-allowed;
+    box-shadow: none;
+}
+.ctrl-btn.disabled:hover,
+.ctrl-btn:disabled:hover {
+    color: rgba(120, 120, 120, 0.55);
+    background: rgba(0, 0, 0, 0.82);
+    transform: none;
+}
 .play-btn {
     width: 44px; height: 44px;
     background: #E8E6E1;
@@ -302,6 +316,121 @@
 .ctrl-row .color-picker {
     width: 28px; height: 28px;
     border-color: rgba(255,255,255,0.15);
+}
+
+/* ── Mode Toggle ─────────────────────────────── */
+.mode-toggle {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-xs);
+    padding: var(--space-sm) var(--space-lg);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.mode-btn {
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.04);
+    color: #A5A29B;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all var(--duration-fast) var(--ease-out);
+}
+.mode-btn:hover {
+    color: #E8E6E1;
+    border-color: rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.08);
+}
+.mode-btn.active {
+    color: var(--accent);
+    border-color: rgba(193, 95, 60, 0.7);
+    background: rgba(193, 95, 60, 0.14);
+}
+.mode-btn.disabled,
+.spectrum-style-btn.disabled,
+.preset-card.disabled,
+.md-preset-item.disabled {
+    opacity: 0.48;
+    pointer-events: none;
+}
+
+/* ── Milkdrop Preset List ────────────────────── */
+.preset-search {
+    width: 100%;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.04);
+    color: #E8E6E1;
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+    font-size: 0.82rem;
+    outline: none;
+    transition: border-color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
+}
+.preset-search:focus {
+    border-color: rgba(193, 95, 60, 0.65);
+    background: rgba(255, 255, 255, 0.06);
+}
+.preset-search::placeholder {
+    color: #6f6b63;
+}
+
+.milkdrop-meta {
+    margin-top: var(--space-xs);
+    margin-bottom: var(--space-sm);
+    font-size: 0.72rem;
+    color: #79756d;
+}
+
+.milkdrop-presets {
+    max-height: 320px;
+    overflow: auto;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-sm);
+    background: rgba(0, 0, 0, 0.14);
+}
+
+.md-preset-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    padding: 9px 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    cursor: pointer;
+    color: #b6b2ab;
+    font-size: 0.78rem;
+    transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+.md-preset-item:last-child {
+    border-bottom: none;
+}
+.md-preset-item:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: #f2f0eb;
+}
+.md-preset-item.active {
+    background: rgba(193, 95, 60, 0.18);
+    color: #ffd8c9;
+}
+
+.md-preset-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.md-preset-score {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: #8f8b83;
+}
+
+.cycle-info {
+    margin-top: var(--space-sm);
+    font-size: 0.72rem;
+    color: #726f68;
 }
 
 /* ── Visualizer Selector ──────────────────────── */

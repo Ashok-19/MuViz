@@ -217,6 +217,22 @@
         box-shadow: 0 0 0 1px rgba(193,95,60,0.25), 0 0 14px rgba(193,95,60,0.3);
     }
 
+    #lyricsBtn.disabled,
+    #lyricsBtn:disabled {
+        background: rgba(0, 0, 0, 0.85);
+        color: rgba(120, 120, 120, 0.55);
+        border: 1px solid rgba(32, 32, 32, 0.95);
+        box-shadow: none;
+        cursor: not-allowed;
+    }
+
+    #lyricsBtn.disabled:hover,
+    #lyricsBtn:disabled:hover {
+        background: rgba(0, 0, 0, 0.85);
+        color: rgba(120, 120, 120, 0.55);
+        transform: none;
+    }
+
     @media (max-width: 900px) {
         .lyrics-display {
             width: 94vw;
@@ -255,11 +271,48 @@
         line-height: 1.45;
         box-shadow: 0 12px 32px rgba(0,0,0,0.22);
     }
+
+    .startup-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 70;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        gap: 10px;
+        background: rgba(7, 7, 8, 0.86);
+        backdrop-filter: blur(12px);
+        color: #f4eee8;
+        text-align: center;
+        transition: opacity 180ms ease;
+    }
+
+    .startup-overlay.hidden {
+        opacity: 0;
+        pointer-events: none;
+    }
+
+    .startup-title {
+        font-family: var(--font-display, 'Outfit', sans-serif);
+        font-size: clamp(1.15rem, 2.2vw, 1.7rem);
+        font-weight: 700;
+    }
+
+    .startup-subtitle {
+        font-size: 0.82rem;
+        color: rgba(244, 238, 232, 0.72);
+    }
 </style>
 {% endblock %}
 
 {% block body %}
 <div class="player-page controls-visible" id="playerPage">
+    <div class="startup-overlay" id="startupOverlay" aria-live="polite">
+        <div class="startup-title" id="startupTitle">Preparing track</div>
+        <div class="startup-subtitle" id="startupSubtitle">Resolving lyrics and loading visualizer...</div>
+    </div>
+
     <!-- Milkdrop WebGL Canvas -->
     <canvas id="milkdropCanvas"></canvas>
 
@@ -290,6 +343,7 @@
         <div class="track-info">
             <span class="track-title">{{ track.title }}</span>
             {% if track.artist %}<span class="track-artist">— {{ track.artist }}</span>{% endif %}
+            <span class="track-artist" id="queueStatus"></span>
         </div>
 
         <!-- Seek -->
@@ -309,7 +363,9 @@
             </div>
 
             <div class="controls-center">
+                <button class="ctrl-btn" id="prevTrackBtn" title="Previous in queue">⏮</button>
                 <button class="ctrl-btn play-btn" id="playBtn" title="Play">▶</button>
+                <button class="ctrl-btn" id="nextTrackBtn" title="Next in queue">⏭</button>
             </div>
 
             <div class="controls-right">
@@ -417,13 +473,39 @@
             <div class="panel-section">
                 <div class="section-title">Milkdrop Presets</div>
                 <input type="text" class="preset-search" id="mdPresetSearch" placeholder="Search presets...">
+                <div class="milkdrop-meta" id="mdPresetStats">Loading presets...</div>
                 <div class="milkdrop-presets" id="mdPresetList">
                     <!-- Populated by JS -->
                 </div>
-                <div class="cycle-info">Press N for next preset • P for previous</div>
+                <div class="cycle-info">Press N for next • P for previous • B for beat mode</div>
             </div>
             <div class="panel-section">
-                <div class="section-title">Options</div>
+                <div class="section-title">Quality and Reactivity</div>
+                <div class="ctrl-row">
+                    <span class="ctrl-label">Quality Profile</span>
+                    <select class="select" id="mdQualityProfile">
+                        <option value="ultra">Ultra</option>
+                        <option value="high" selected>High</option>
+                        <option value="balanced">Balanced</option>
+                        <option value="all">All</option>
+                    </select>
+                </div>
+                <div class="ctrl-row">
+                    <span class="ctrl-label">Favorites Only</span>
+                    <input type="checkbox" class="toggle" id="mdFavoritesOnly">
+                </div>
+                <div class="ctrl-row">
+                    <span class="ctrl-label">Beat Reactive</span>
+                    <input type="checkbox" class="toggle" id="mdBeatReactive" checked>
+                </div>
+                <div class="ctrl-row">
+                    <span class="ctrl-label">Beat Sensitivity</span>
+                    <input type="range" class="slider" id="mdBeatSensitivity" min="0.6" max="1.8" value="1.05" step="0.05">
+                    <span class="ctrl-value" id="mdBeatSensitivityVal">1.05</span>
+                </div>
+            </div>
+            <div class="panel-section">
+                <div class="section-title">Cycle and Blend</div>
                 <div class="ctrl-row">
                     <span class="ctrl-label">Auto-Cycle</span>
                     <input type="checkbox" class="toggle" id="mdAutoCycle" checked>
@@ -460,9 +542,12 @@
 <!-- Open-source visualizer libraries (CDN) -->
 <script src="https://cdn.jsdelivr.net/npm/butterchurn@2.6.7/lib/butterchurn.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/butterchurn-presets@2.4.7/lib/butterchurnPresets.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/butterchurn-presets@2.4.7/lib/butterchurnPresetsExtra.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/butterchurn-presets@2.4.7/lib/butterchurnPresetsExtra2.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/butterchurn-presets@2.4.7/lib/butterchurnPresetsMD1.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/audiomotion-analyzer@4"></script>
 <!-- App scripts -->
-<script src="{% static 'js/presets.js' %}"></script>
-<script src="{% static 'js/open-karaoke-lyrics.js' %}"></script>
-<script src="{% static 'js/visualizer-engine.js' %}"></script>
+<script src="{% static 'js/presets.js' %}?v=20260318-queuefix1"></script>
+<script src="{% static 'js/open-karaoke-lyrics.js' %}?v=20260318-queuefix1"></script>
+<script src="{% static 'js/visualizer-engine.js' %}?v=20260318-queuefix1"></script>
 {% endblock %}

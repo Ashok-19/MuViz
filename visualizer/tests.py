@@ -14,8 +14,10 @@ class LandingPageTests(TestCase):
     def test_index_exposes_upload_and_link_ingest(self):
         response = self.client.get('/')
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'One input. Instant player.')
+        self.assertContains(response, 'Play music.')
         self.assertContains(response, 'SoundCloud, Internet Archive, direct audio.')
+        self.assertContains(response, 'id="fileInput"')
+        self.assertContains(response, 'multiple')
 
 
 class UploadApiTests(TestCase):
@@ -97,6 +99,8 @@ class PlayerPageTests(TestCase):
         self.assertContains(response, 'https://example.com/audio.mp3')
         self.assertContains(response, 'id="lyricsBtn"')
         self.assertContains(response, 'id="lyricsDisplay"')
+        self.assertContains(response, 'id="prevTrackBtn"')
+        self.assertContains(response, 'id="nextTrackBtn"')
         self.assertContains(response, 'open-karaoke-lyrics.js')
 
     def test_player_shows_preview_warning_when_track_is_preview_only(self):

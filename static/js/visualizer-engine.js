@@ -19,14 +19,28 @@
     const muteBtn = document.getElementById('muteBtn');
     const fullscreenBtn = document.getElementById('fullscreenBtn');
     const hideBarBtn = document.getElementById('hideBarBtn');
+    const prevTrackBtn = document.getElementById('prevTrackBtn');
+    const nextTrackBtn = document.getElementById('nextTrackBtn');
+    const queueStatusEl = document.getElementById('queueStatus');
     const bottomBar = document.getElementById('bottomBar');
     const lyricsOverlay = document.getElementById('lyricsOverlay');
     const lyricsDisplay = document.getElementById('lyricsDisplay');
     const lyricsStatus = document.getElementById('lyricsStatus');
     const lyricsBtn = document.getElementById('lyricsBtn');
+    const startupOverlay = document.getElementById('startupOverlay');
+    const startupTitle = document.getElementById('startupTitle');
+    const startupSubtitle = document.getElementById('startupSubtitle');
+
+    const QUEUE_STORAGE_KEY = 'muviz-play-queue';
+    const LYRICS_STATUS_STORAGE_KEY = 'muviz-lyrics-status';
+
+    let startupReady = false;
 
     let audioCtx = null;
     let sourceNode = null;
+    let analysisAnalyser = null;
+    let analysisFreqData = null;
+    let analysisPrevFreqData = null;
 
     function ensureAudioPipeline() {
         if (!audioCtx) {
@@ -34,6 +48,19 @@
             sourceNode = audioCtx.createMediaElementSource(audioEl);
             sourceNode.connect(audioCtx.destination);
         }
+
+        if (!analysisAnalyser && audioCtx && sourceNode) {
+            analysisAnalyser = audioCtx.createAnalyser();
+            analysisAnalyser.fftSize = 2048;
+            analysisAnalyser.smoothingTimeConstant = 0.72;
+            analysisAnalyser.minDecibels = -90;
+            analysisAnalyser.maxDecibels = -10;
+            sourceNode.connect(analysisAnalyser);
+
+            analysisFreqData = new Uint8Array(analysisAnalyser.frequencyBinCount);
+            analysisPrevFreqData = new Uint8Array(analysisAnalyser.frequencyBinCount);
+        }
+
         return { audioCtx, sourceNode };
     }
 
@@ -52,16 +79,377 @@
         mdCanvas: document.getElementById('milkdropCanvas'),
         mdPresets: {},
         mdPresetNames: [],
+        mdCatalog: [],
+        mdVisiblePresetIndices: [],
         mdCurrentIdx: 0,
         mdInitialPresetChosen: false,
         mdBlendTime: 1.5,
         mdAutoCycle: true,
         mdCycleTime: 5,
+        mdQualityProfile: window.MILKDROP_DEFAULT_QUALITY_PROFILE || 'high',
+        mdFavoritesOnly: false,
+        mdLastFilter: '',
+        mdBeatReactive: true,
+        mdBeatSensitivity: 1.05,
+        mdBeatLastSwitchAt: 0,
+        mdBeatSwitchCooldownMs: 1800,
+        mdThirdPartyLoading: false,
+        mdThirdPartyLoaded: false,
         mdCycleTimer: null,
         mdAnimFrame: null,
         audioMotion: null,
         amContainer: document.getElementById('spectrumContainer'),
+        reactive: {
+            fluxAvg: 0,
+            energyAvg: 0,
+            bassAvg: 0,
+            lastBeatAt: 0,
+        },
     };
+
+    const queue = {
+        tracks: [],
+        index: -1,
+        active: false,
+    };
+
+    function safeReadJSON(key, fallback) {
+        try {
+            const raw = sessionStorage.getItem(key);
+            if (!raw) return fallback;
+            const parsed = JSON.parse(raw);
+            return parsed && typeof parsed === 'object' ? parsed : fallback;
+        } catch (_) {
+            return fallback;
+        }
+    }
+
+    function safeWriteJSON(key, value) {
+        try {
+            sessionStorage.setItem(key, JSON.stringify(value));
+        } catch (_) {
+            // Storage can fail in strict browser modes.
+        }
+    }
+
+    function initQueue() {
+        const stored = safeReadJSON(QUEUE_STORAGE_KEY, {});
+        const tracks = Array.isArray(stored.tracks) ? stored.tracks : [];
+        const currentId = Number(window.TRACK && window.TRACK.id);
+        const index = tracks.findIndex(track => Number(track.id) === currentId);
+
+        if (index < 0 || tracks.length < 2) {
+            queue.active = false;
+            queue.tracks = tracks;
+            queue.index = index;
+            return;
+        }
+
+        queue.active = true;
+        queue.tracks = tracks;
+        queue.index = index;
+    }
+
+    function updateQueueUI() {
+        if (queueStatusEl) {
+            if (queue.active) {
+                queueStatusEl.textContent = '• Queue ' + (queue.index + 1) + '/' + queue.tracks.length;
+            } else {
+                queueStatusEl.textContent = '';
+            }
+        }
+
+        if (prevTrackBtn) {
+            const canPrev = queue.active && queue.index > 0;
+            prevTrackBtn.disabled = !canPrev;
+            prevTrackBtn.classList.toggle('disabled', !canPrev);
+        }
+
+        if (nextTrackBtn) {
+            const canNext = queue.active && queue.index >= 0 && queue.index < queue.tracks.length - 1;
+            nextTrackBtn.disabled = !canNext;
+            nextTrackBtn.classList.toggle('disabled', !canNext);
+        }
+    }
+
+    function navigateQueueTo(index) {
+        if (!queue.active || index < 0 || index >= queue.tracks.length) return false;
+        const next = queue.tracks[index];
+        if (!next || Number(next.id) === Number(window.TRACK.id)) return false;
+
+        window.location.href = '/play/' + next.id + '/';
+        return true;
+    }
+
+    function goToNextQueueTrack() {
+        if (!queue.active) return false;
+        return navigateQueueTo(queue.index + 1);
+    }
+
+    function goToPrevQueueTrack() {
+        if (!queue.active) return false;
+        return navigateQueueTo(queue.index - 1);
+    }
+
+    function setStartupPhase(title, subtitle) {
+        if (startupTitle && title) startupTitle.textContent = title;
+        if (startupSubtitle && subtitle) startupSubtitle.textContent = subtitle;
+    }
+
+    function setStartupLock(locked) {
+        const controls = [
+            playBtn,
+            prevTrackBtn,
+            nextTrackBtn,
+            muteBtn,
+            fullscreenBtn,
+            hideBarBtn,
+            lyricsBtn,
+            seekBar,
+            volumeSlider,
+            document.getElementById('panelToggle'),
+            document.getElementById('panelClose'),
+            document.getElementById('mdPresetSearch'),
+            document.getElementById('mdQualityProfile'),
+            document.getElementById('mdAutoCycle'),
+            document.getElementById('mdFavoritesOnly'),
+            document.getElementById('mdBeatReactive'),
+            document.getElementById('mdCycleTime'),
+            document.getElementById('mdBlendTime'),
+            document.getElementById('mdBeatSensitivity'),
+        ];
+
+        controls.forEach(control => {
+            if (!control) return;
+            control.disabled = !!locked;
+            control.classList.toggle('disabled', !!locked);
+        });
+
+        document.querySelectorAll('.mode-btn, .spectrum-style-btn, .preset-card, .md-preset-item').forEach(el => {
+            el.classList.toggle('disabled', !!locked);
+            if (locked) {
+                el.setAttribute('aria-disabled', 'true');
+            } else {
+                el.removeAttribute('aria-disabled');
+            }
+        });
+    }
+
+    function hideStartupOverlay() {
+        if (!startupOverlay) return;
+        startupOverlay.classList.add('hidden');
+    }
+
+    function getMilkdropProfile() {
+        if (typeof window.getMilkdropQualityProfile === 'function') {
+            return window.getMilkdropQualityProfile(engine.mdQualityProfile);
+        }
+        return { id: 'all', minScore: 0 };
+    }
+
+    function rebuildMilkdropCatalog() {
+        if (typeof window.buildMilkdropCatalog === 'function') {
+            engine.mdCatalog = window.buildMilkdropCatalog(engine.mdPresetNames);
+            return;
+        }
+
+        engine.mdCatalog = engine.mdPresetNames.map((name, index) => ({
+            name,
+            index,
+            score: 50,
+            tags: [],
+            isFavorite: false,
+        }));
+    }
+
+    function asPresetMap(rawPack) {
+        if (!rawPack) return null;
+        if (typeof rawPack.getPresets === 'function') {
+            return rawPack.getPresets();
+        }
+        if (typeof rawPack === 'object') {
+            return rawPack;
+        }
+        return null;
+    }
+
+    function mergePresetPack(target, rawPack, prefix = '') {
+        const pack = asPresetMap(rawPack);
+        if (!pack || typeof pack !== 'object') return 0;
+
+        let added = 0;
+        Object.keys(pack).forEach(name => {
+            const finalName = prefix ? prefix + name : name;
+            if (!target[finalName]) {
+                target[finalName] = pack[name];
+                added += 1;
+            }
+        });
+
+        return added;
+    }
+
+    async function fetchJSON(url) {
+        const response = await fetch(url, { cache: 'force-cache' });
+        if (!response.ok) {
+            throw new Error('HTTP ' + response.status + ' for ' + url);
+        }
+        return response.json();
+    }
+
+    async function mapWithConcurrency(items, limit, worker) {
+        const output = new Array(items.length);
+        let cursor = 0;
+
+        async function run() {
+            while (cursor < items.length) {
+                const index = cursor;
+                cursor += 1;
+                try {
+                    output[index] = await worker(items[index], index);
+                } catch (_) {
+                    output[index] = null;
+                }
+            }
+        }
+
+        const workers = [];
+        const workerCount = Math.max(1, Math.min(limit, items.length));
+        for (let i = 0; i < workerCount; i += 1) {
+            workers.push(run());
+        }
+
+        await Promise.all(workers);
+        return output;
+    }
+
+    async function loadThirdPartyInternetPresets() {
+        if (engine.mdThirdPartyLoading || engine.mdThirdPartyLoaded) return;
+        engine.mdThirdPartyLoading = true;
+
+        try {
+            const manifest = await fetchJSON('https://unpkg.com/butterchurn-presets-weekly@0.0.4/weeks/presets.json');
+            const entries = Object.entries(manifest || {});
+            if (!entries.length) return;
+
+            const baseNames = entries.map(([name]) => name);
+            let scored = baseNames.map((name, index) => ({ name, score: 50, index }));
+
+            if (typeof window.buildMilkdropCatalog === 'function') {
+                scored = window.buildMilkdropCatalog(baseNames).map(entry => ({
+                    name: entry.name,
+                    score: entry.score,
+                }));
+            }
+
+            scored.sort((a, b) => b.score - a.score);
+            const topSelection = scored.slice(0, 120);
+            const selectionMap = new Map(topSelection.map(item => [item.name, item.score]));
+
+            const selectedEntries = entries
+                .filter(([name]) => selectionMap.has(name))
+                .sort((a, b) => (selectionMap.get(b[0]) || 0) - (selectionMap.get(a[0]) || 0));
+
+            const loaded = await mapWithConcurrency(selectedEntries, 6, async ([name, url]) => {
+                const preset = await fetchJSON(url);
+                return { name, preset };
+            });
+
+            let added = 0;
+            loaded.forEach(item => {
+                if (!item || !item.preset || typeof item.preset !== 'object') return;
+                const finalName = '[Weekly] ' + item.name;
+                if (!engine.mdPresets[finalName]) {
+                    engine.mdPresets[finalName] = item.preset;
+                    added += 1;
+                }
+            });
+
+            if (added > 0) {
+                engine.mdPresetNames = Object.keys(engine.mdPresets).sort((a, b) => a.localeCompare(b));
+                rebuildMilkdropCatalog();
+                const search = document.getElementById('mdPresetSearch');
+                buildMilkdropPresetList(search ? search.value : '');
+            }
+        } catch (error) {
+            console.warn('Unable to load third-party internet presets:', error);
+        } finally {
+            engine.mdThirdPartyLoading = false;
+            engine.mdThirdPartyLoaded = true;
+        }
+    }
+
+    function getPresetPoolIndices() {
+        if (engine.mdVisiblePresetIndices.length > 0) {
+            return engine.mdVisiblePresetIndices;
+        }
+        const hasFilter = Boolean(engine.mdLastFilter) || engine.mdFavoritesOnly || getMilkdropProfile().minScore > 0;
+        if (hasFilter) {
+            return [];
+        }
+        return engine.mdPresetNames.map((_, idx) => idx);
+    }
+
+    function computeBandAverage(minHz, maxHz) {
+        if (!analysisAnalyser || !analysisFreqData || !audioCtx) return 0;
+        const nyquist = audioCtx.sampleRate / 2;
+        const binCount = analysisFreqData.length;
+        const minBin = Math.max(0, Math.floor((minHz / nyquist) * binCount));
+        const maxBin = Math.min(binCount - 1, Math.ceil((maxHz / nyquist) * binCount));
+        if (maxBin <= minBin) return 0;
+
+        let sum = 0;
+        let count = 0;
+        for (let i = minBin; i <= maxBin; i += 1) {
+            sum += analysisFreqData[i];
+            count += 1;
+        }
+        return count > 0 ? sum / count : 0;
+    }
+
+    function updateReactiveMetrics() {
+        if (!analysisAnalyser || !analysisFreqData || audioEl.paused) return { isBeat: false };
+
+        analysisAnalyser.getByteFrequencyData(analysisFreqData);
+
+        let flux = 0;
+        let total = 0;
+        for (let i = 0; i < analysisFreqData.length; i += 1) {
+            const value = analysisFreqData[i];
+            total += value;
+            const delta = value - analysisPrevFreqData[i];
+            if (delta > 0) flux += delta;
+            analysisPrevFreqData[i] = value;
+        }
+
+        const avgEnergy = total / analysisFreqData.length;
+        const bass = computeBandAverage(25, 170);
+        const lowMid = computeBandAverage(170, 550);
+        const high = computeBandAverage(2000, 8000);
+        const fluxNorm = flux / analysisFreqData.length;
+
+        engine.reactive.fluxAvg = engine.reactive.fluxAvg * 0.9 + fluxNorm * 0.1;
+        engine.reactive.energyAvg = engine.reactive.energyAvg * 0.92 + avgEnergy * 0.08;
+        engine.reactive.bassAvg = engine.reactive.bassAvg * 0.9 + bass * 0.1;
+
+        const weightedEnergy = bass * 0.58 + lowMid * 0.27 + high * 0.15;
+        const beatThreshold = (engine.reactive.energyAvg * (1.02 + engine.mdBeatSensitivity * 0.18)) + 8;
+        const fluxThreshold = (engine.reactive.fluxAvg * (1.03 + engine.mdBeatSensitivity * 0.22)) + 2;
+        const now = performance.now();
+        const canTrigger = (now - engine.reactive.lastBeatAt) > 120;
+        const isBeat = canTrigger && weightedEnergy > beatThreshold && fluxNorm > fluxThreshold;
+
+        if (isBeat) {
+            engine.reactive.lastBeatAt = now;
+        }
+
+        return {
+            isBeat,
+            now,
+            weightedEnergy,
+            bass,
+        };
+    }
 
     function updateModeButtons() {
         document.querySelectorAll('.mode-btn').forEach(btn => {
@@ -241,30 +629,39 @@
             });
             engine.milkdrop.connectAudio(sourceNode);
 
-            let presets = null;
+            const mergedPresets = {};
             if (typeof butterchurnPresets !== 'undefined') {
-                const bp = butterchurnPresets.default || butterchurnPresets;
-                if (typeof bp.getPresets === 'function') {
-                    presets = bp.getPresets();
-                } else if (typeof bp === 'object') {
-                    presets = bp;
-                }
+                mergePresetPack(mergedPresets, butterchurnPresets.default || butterchurnPresets);
+            }
+            if (typeof butterchurnPresetsExtra !== 'undefined') {
+                mergePresetPack(mergedPresets, butterchurnPresetsExtra, '[Extra] ');
+            }
+            if (typeof butterchurnPresetsExtra2 !== 'undefined') {
+                mergePresetPack(mergedPresets, butterchurnPresetsExtra2, '[Extra2] ');
+            }
+            if (typeof butterchurnPresetsMD1 !== 'undefined') {
+                mergePresetPack(mergedPresets, butterchurnPresetsMD1, '[MD1] ');
             }
 
-            if (presets && typeof presets === 'object') {
-                engine.mdPresets = presets;
-                engine.mdPresetNames = Object.keys(presets).sort((a, b) => a.localeCompare(b));
+            if (Object.keys(mergedPresets).length > 0) {
+                engine.mdPresets = mergedPresets;
+                engine.mdPresetNames = Object.keys(mergedPresets).sort((a, b) => a.localeCompare(b));
+                rebuildMilkdropCatalog();
             }
 
             if (engine.mdPresetNames.length > 0) {
+                buildMilkdropPresetList();
                 if (!engine.mdInitialPresetChosen) {
-                    engine.mdCurrentIdx = Math.floor(Math.random() * engine.mdPresetNames.length);
+                    const pool = getPresetPoolIndices();
+                    const fallbackPool = pool.length > 0 ? pool : engine.mdPresetNames.map((_, idx) => idx);
+                    const randomPos = Math.floor(Math.random() * fallbackPool.length);
+                    engine.mdCurrentIdx = fallbackPool[randomPos];
                     engine.mdInitialPresetChosen = true;
                 }
                 loadMilkdropPreset(engine.mdCurrentIdx, 0);
             }
 
-            buildMilkdropPresetList();
+            loadThirdPartyInternetPresets();
             console.log('Milkdrop initialized:', engine.mdPresetNames.length, 'presets');
         } catch (error) {
             console.error('Milkdrop init failed:', error);
@@ -289,21 +686,53 @@
         if (activeItem) {
             activeItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
         }
+
+        updateMilkdropStats();
     }
 
     function nextMilkdropPreset() {
-        loadMilkdropPreset(engine.mdCurrentIdx + 1, engine.mdBlendTime);
+        const pool = getPresetPoolIndices();
+        if (!pool.length) return;
+        const pos = pool.indexOf(engine.mdCurrentIdx);
+        const nextPos = pos >= 0 ? (pos + 1) % pool.length : 0;
+        loadMilkdropPreset(pool[nextPos], engine.mdBlendTime);
         resetCycleTimer();
     }
 
     function prevMilkdropPreset() {
-        loadMilkdropPreset(engine.mdCurrentIdx - 1, engine.mdBlendTime);
+        const pool = getPresetPoolIndices();
+        if (!pool.length) return;
+        const pos = pool.indexOf(engine.mdCurrentIdx);
+        const prevPos = pos >= 0 ? (pos - 1 + pool.length) % pool.length : 0;
+        loadMilkdropPreset(pool[prevPos], engine.mdBlendTime);
         resetCycleTimer();
+    }
+
+    function pickWeightedRandomPresetIndex() {
+        const pool = getPresetPoolIndices();
+        if (!pool.length) return -1;
+
+        const weightedEntries = pool.map(index => {
+            const catalogEntry = engine.mdCatalog.find(entry => entry.index === index);
+            const score = catalogEntry ? catalogEntry.score : 50;
+            const weight = Math.max(1, Math.pow((score + 12) / 20, 1.4));
+            return { index, weight };
+        });
+
+        const totalWeight = weightedEntries.reduce((sum, entry) => sum + entry.weight, 0);
+        let roll = Math.random() * totalWeight;
+        for (let i = 0; i < weightedEntries.length; i += 1) {
+            roll -= weightedEntries[i].weight;
+            if (roll <= 0) return weightedEntries[i].index;
+        }
+
+        return weightedEntries[weightedEntries.length - 1].index;
     }
 
     function randomMilkdropPreset() {
         if (!engine.mdPresetNames.length) return;
-        const index = Math.floor(Math.random() * engine.mdPresetNames.length);
+        const index = pickWeightedRandomPresetIndex();
+        if (index < 0) return;
         loadMilkdropPreset(index, engine.mdBlendTime);
     }
 
@@ -328,6 +757,21 @@
             engine.mdAnimFrame = null;
             return;
         }
+
+        const metrics = updateReactiveMetrics();
+        if (engine.mdBeatReactive && metrics.isBeat) {
+            const elapsed = metrics.now - engine.mdBeatLastSwitchAt;
+            const cooldown = engine.mdBeatSwitchCooldownMs * (1.25 - Math.min(engine.mdBeatSensitivity, 1.5) * 0.3);
+            if (elapsed >= cooldown) {
+                const dynamicBlend = Math.max(0.3, engine.mdBlendTime * 0.72);
+                const nextIndex = pickWeightedRandomPresetIndex();
+                if (nextIndex >= 0) {
+                    loadMilkdropPreset(nextIndex, dynamicBlend);
+                    engine.mdBeatLastSwitchAt = metrics.now;
+                }
+            }
+        }
+
         engine.milkdrop.render();
         engine.mdAnimFrame = requestAnimationFrame(renderMilkdrop);
     }
@@ -337,21 +781,57 @@
         engine.mdAnimFrame = requestAnimationFrame(renderMilkdrop);
     }
 
+    function updateMilkdropStats() {
+        const stats = document.getElementById('mdPresetStats');
+        if (!stats) return;
+
+        const profile = getMilkdropProfile();
+        const shown = engine.mdVisiblePresetIndices.length;
+        const total = engine.mdPresetNames.length;
+        const profileLabel = (profile && profile.label) || 'All';
+        const modeLabel = engine.mdFavoritesOnly ? 'favorites only' : 'catalog';
+        stats.textContent = shown + ' of ' + total + ' presets • ' + profileLabel + ' • ' + modeLabel;
+    }
+
     function buildMilkdropPresetList(filter = '') {
         const list = document.getElementById('mdPresetList');
         if (!list) return;
+
+        const profile = getMilkdropProfile();
         const filterText = filter.toLowerCase();
+        engine.mdLastFilter = filterText;
         list.innerHTML = '';
-        engine.mdPresetNames.forEach((name, index) => {
+        engine.mdVisiblePresetIndices = [];
+
+        engine.mdCatalog.forEach(entry => {
+            const name = entry.name;
+            if (profile && entry.score < profile.minScore) return;
+            if (engine.mdFavoritesOnly && !entry.isFavorite) return;
             if (filterText && !name.toLowerCase().includes(filterText)) return;
+
+            engine.mdVisiblePresetIndices.push(entry.index);
+
             const item = document.createElement('div');
             item.className = 'md-preset-item';
-            item.dataset.idx = String(index);
-            item.textContent = name;
-            item.title = name;
-            if (index === engine.mdCurrentIdx) item.classList.add('active');
+            item.dataset.idx = String(entry.index);
+
+            const nameEl = document.createElement('span');
+            nameEl.className = 'md-preset-name';
+            nameEl.textContent = name;
+
+            const scoreEl = document.createElement('span');
+            scoreEl.className = 'md-preset-score';
+            scoreEl.textContent = String(entry.score);
+
+            item.appendChild(nameEl);
+            item.appendChild(scoreEl);
+
+            item.title = name + ' • score ' + entry.score;
+            if (entry.index === engine.mdCurrentIdx) item.classList.add('active');
             list.appendChild(item);
         });
+
+        updateMilkdropStats();
     }
 
     // ══════════════════════════════════════════════
@@ -427,6 +907,10 @@
     }
 
     async function togglePlayback() {
+        if (!startupReady) {
+            showLyricsStatus('Preparing track. Please wait...');
+            return;
+        }
         try {
             await primeAudioPipeline();
             if (!audioEl.paused) {
@@ -447,6 +931,7 @@
         active: false,
         fetched: false,
         available: null,
+        availabilityChecked: false,
         synced: false,
         renderer: null,
         rafId: null,
@@ -455,6 +940,64 @@
 
     if (window.OpenKaraokeLyricsDisplay && lyricsDisplay) {
         lyrics.renderer = new window.OpenKaraokeLyricsDisplay(lyricsDisplay);
+    }
+
+    function setCachedLyricsAvailability(trackId, available) {
+        const cache = safeReadJSON(LYRICS_STATUS_STORAGE_KEY, {});
+        cache[String(trackId)] = !!available;
+        safeWriteJSON(LYRICS_STATUS_STORAGE_KEY, cache);
+    }
+
+    function getCachedLyricsAvailability(trackId) {
+        const cache = safeReadJSON(LYRICS_STATUS_STORAGE_KEY, {});
+        const value = cache[String(trackId)];
+        return typeof value === 'boolean' ? value : null;
+    }
+
+    function applyLyricsAvailability(available) {
+        const isAvailable = !!available;
+        lyrics.available = isAvailable;
+        lyrics.availabilityChecked = true;
+
+        if (lyricsBtn) {
+            lyricsBtn.disabled = !isAvailable;
+            lyricsBtn.classList.toggle('disabled', !isAvailable);
+            lyricsBtn.title = isAvailable ? 'Lyrics' : 'Lyrics unavailable for this track';
+        }
+
+        if (!isAvailable) {
+            lyrics.active = false;
+            lyrics.fetched = false;
+            if (lyricsOverlay) lyricsOverlay.classList.remove('active');
+            if (lyricsBtn) lyricsBtn.classList.remove('active');
+            stopLyricsSync();
+        }
+    }
+
+    async function primeLyricsAvailability() {
+        const trackId = window.TRACK && window.TRACK.id;
+        if (!trackId) return;
+
+        const cached = getCachedLyricsAvailability(trackId);
+        if (cached !== null) {
+            applyLyricsAvailability(cached);
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/lyrics/' + trackId + '/', {
+                headers: {
+                    Accept: 'application/json',
+                },
+            });
+
+            const available = response.ok ? !!(await response.json()).available : false;
+            setCachedLyricsAvailability(trackId, available);
+            applyLyricsAvailability(available);
+        } catch (_) {
+            setCachedLyricsAvailability(trackId, false);
+            applyLyricsAvailability(false);
+        }
     }
 
     function showLyricsStatus(message, timeout = 2400) {
@@ -471,6 +1014,10 @@
 
     async function fetchLyrics() {
         if (lyrics.fetched || !window.TRACK || !window.TRACK.lyricsUrl) return;
+        if (lyrics.available === false) {
+            showLyricsStatus('Lyrics are not available for this track');
+            return;
+        }
         lyrics.fetched = true;
 
         if (!lyrics.renderer) {
@@ -500,10 +1047,16 @@
             lyrics.renderer.loadSyncedLRC(lrcText);
             lyrics.synced = true;
             lyrics.available = true;
+            lyrics.availabilityChecked = true;
+            setCachedLyricsAvailability(window.TRACK.id, true);
+            applyLyricsAvailability(true);
             showLyricsStatus('Synced lyrics loaded');
         } catch (error) {
             lyrics.fetched = false;
             lyrics.available = false;
+            lyrics.availabilityChecked = true;
+            setCachedLyricsAvailability(window.TRACK.id, false);
+            applyLyricsAvailability(false);
             showLyricsStatus('No lyrics found for this track');
         }
     }
@@ -535,6 +1088,14 @@
 
     function toggleLyrics() {
         if (!lyricsOverlay || !lyricsBtn || !lyricsDisplay) return;
+        if (!startupReady) {
+            showLyricsStatus('Preparing track. Please wait...');
+            return;
+        }
+        if (lyricsBtn.disabled) {
+            showLyricsStatus('Lyrics are not available for this track');
+            return;
+        }
         lyrics.active = !lyrics.active;
         lyricsOverlay.classList.toggle('active', lyrics.active);
         lyricsBtn.classList.toggle('active', lyrics.active);
@@ -646,6 +1207,28 @@
             milkdropSearch.addEventListener('input', () => buildMilkdropPresetList(milkdropSearch.value));
         }
 
+        const mdQualityProfile = document.getElementById('mdQualityProfile');
+        if (mdQualityProfile) {
+            mdQualityProfile.value = engine.mdQualityProfile;
+            mdQualityProfile.addEventListener('change', () => {
+                engine.mdQualityProfile = mdQualityProfile.value;
+                buildMilkdropPresetList(milkdropSearch ? milkdropSearch.value : '');
+            });
+        }
+
+        bindToggle('mdFavoritesOnly', value => {
+            engine.mdFavoritesOnly = value;
+            buildMilkdropPresetList(milkdropSearch ? milkdropSearch.value : '');
+        });
+
+        bindToggle('mdBeatReactive', value => {
+            engine.mdBeatReactive = value;
+        });
+
+        bindSlider('mdBeatSensitivity', value => {
+            engine.mdBeatSensitivity = parseFloat(value);
+        });
+
         const milkdropList = document.getElementById('mdPresetList');
         if (milkdropList) {
             milkdropList.addEventListener('click', event => {
@@ -666,6 +1249,8 @@
         bindSlider('mdBlendTime', value => {
             engine.mdBlendTime = parseFloat(value);
         });
+
+        buildMilkdropPresetList(milkdropSearch ? milkdropSearch.value : '');
     }
 
     // ══════════════════════════════════════════════
@@ -687,6 +1272,7 @@
     });
 
     audioEl.addEventListener('ended', () => {
+        if (goToNextQueueTrack()) return;
         playBtn.textContent = '▶';
         syncVisualizerPlayback();
     });
@@ -725,6 +1311,18 @@
         syncVolumeUI();
     });
 
+    if (prevTrackBtn) {
+        prevTrackBtn.addEventListener('click', () => {
+            goToPrevQueueTrack();
+        });
+    }
+
+    if (nextTrackBtn) {
+        nextTrackBtn.addEventListener('click', () => {
+            goToNextQueueTrack();
+        });
+    }
+
     fullscreenBtn.addEventListener('click', () => {
         if (!document.fullscreenElement) {
             playerPage.requestFullscreen().catch(() => {});
@@ -761,6 +1359,7 @@
     document.addEventListener('keydown', event => {
         const tagName = event.target.tagName;
         if (tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT') return;
+        if (!startupReady) return;
 
         switch (event.key) {
             case ' ':
@@ -791,6 +1390,20 @@
             case 'R':
                 if (engine.mode === 'milkdrop') randomMilkdropPreset();
                 break;
+            case '[':
+                goToPrevQueueTrack();
+                break;
+            case ']':
+                goToNextQueueTrack();
+                break;
+            case 'b':
+            case 'B':
+                if (engine.mode === 'milkdrop') {
+                    engine.mdBeatReactive = !engine.mdBeatReactive;
+                    const beatToggle = document.getElementById('mdBeatReactive');
+                    if (beatToggle) beatToggle.checked = engine.mdBeatReactive;
+                }
+                break;
             case 'ArrowLeft':
                 audioEl.currentTime = Math.max(0, audioEl.currentTime - 5);
                 break;
@@ -819,7 +1432,36 @@
         }
     });
 
-    bindControls();
-    syncDurationUI();
-    setMode('milkdrop');
+    async function bootstrapPlayer() {
+        setStartupLock(true);
+        setStartupPhase('Preparing track', 'Resolving queue and lyrics...');
+
+        initQueue();
+        updateQueueUI();
+        bindControls();
+        syncDurationUI();
+
+        try {
+            await primeLyricsAvailability();
+
+            if (lyrics.available) {
+                setStartupPhase('Loading lyrics', 'Syncing lyric timeline before visualizer starts...');
+                await fetchLyrics();
+            } else {
+                showLyricsStatus('Lyrics are not available for this track');
+            }
+        } catch (error) {
+            console.warn('Startup preparation failed:', error);
+            showLyricsStatus('Track loaded with limited metadata');
+        }
+
+        setMode('milkdrop');
+        startupReady = true;
+        setStartupLock(false);
+        applyLyricsAvailability(lyrics.available);
+        setStartupPhase('Ready', 'Player loaded');
+        hideStartupOverlay();
+    }
+
+    bootstrapPlayer();
 })();

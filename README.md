@@ -1,39 +1,63 @@
 # MuViz
 
-MuViz is a Django-based music visualizer web app.
-It supports:
-- local audio upload
-- real-time visualization (Milkdrop + spectrum mode)
-- synced lyric overlay with karaoke-style word highlighting
+MuViz is a Django music visualizer app with two playback/visual modes and karaoke-style lyrics.
 
-## What You Get
+## Main Features
 
-- Upload audio files and start visualizing immediately
-- Two visualizer engines in one player:
-  - Milkdrop presets via `butterchurn`
-  - Spectrum mode via `audiomotion-analyzer`
-- Customization panel for presets and visualizer options
-- Karaoke-like lyric rendering with smooth screen transitions and progressive word highlight
+- Upload local audio files (single or multi-file queue upload, up to 10 files per batch).
+- Ingest remote audio links (SoundCloud, Internet Archive, direct audio URL).
+- Play audio in a full-screen visualizer player.
+- Navigate queued tracks with on-screen previous/next controls.
+- Switch between:
+  - Milkdrop mode (`butterchurn`)
+  - Spectrum mode (`audiomotion-analyzer`)
+- Control playback (seek, volume, mute, fullscreen, hide controls, keyboard shortcuts).
+- Show synced lyrics with progressive per-word highlight and availability-aware UI state.
+- Cache resolved LRC lyrics on the track record.
+
+## Recent Visualizer Upgrades
+
+- Quality-scored Milkdrop catalog with profile filters: `ultra`, `high`, `balanced`, `all`.
+- Favorites-only filtering and weighted random preset selection.
+- Beat-reactive Milkdrop switching with sensitivity control.
+- Expanded preset sources via bundled extra packs (`Extra`, `Extra2`, `MD1`) plus curated weekly internet presets.
+- Startup gate overlay in player so interactions unlock only after queue and lyric preparation completes.
 
 ## Tech Stack
 
 - Backend: Django 5
-- Database: SQLite (`db.sqlite3`)
+- Database: SQLite by default (PostgreSQL via `DATABASE_URL`)
 - Audio metadata: `mutagen`
+- Remote ingestion/lyrics HTTP calls: `requests`
+- SoundCloud resolution/download: `yt-dlp`
+- Static serving in deployment: `whitenoise`
 - Frontend: Django templates + vanilla JS + CSS
-- Visualizer libraries (loaded from CDN):
-  - `butterchurn`
-  - `butterchurn-presets`
-  - `audiomotion-analyzer`
 
-## Repository Layout
+## Current Source Types
+
+`Track.source` values:
+
+- `upload`
+- `soundcloud`
+- `internet_archive`
+- `remote_url`
+- `youtube` (legacy value retained for existing records)
+
+Notes:
+
+- SoundCloud is loaded as cached file download in backend flow.
+- If SoundCloud formats are preview-only, `preview_only=true` is stored and a warning is shown in player UI.
+- Internet Archive and direct URLs may stream directly if CORS + byte-range headers are available; otherwise they are cached locally.
+
+## Project Layout
 
 ```text
 forge-website/
   manage.py
-  db.sqlite3
   requirements.txt
-  README.md
+  build.sh
+  Dockerfile
+  render.yaml
   muviz/
     settings.py
     urls.py
@@ -42,12 +66,15 @@ forge-website/
     views.py
     urls.py
     forms.py
+    services/
+      lyrics.py
+      remote_audio.py
     migrations/
-  templates/
-    visualizer/
-      base.html
-      index.html
-      player.html
+    tests.py
+  templates/visualizer/
+    base.html
+    index.html
+    player.html
   static/
     css/
       design-system.css
@@ -55,201 +82,178 @@ forge-website/
       visualizer.css
     js/
       app.js
-      audio-engine.js
       presets.js
       visualizer-engine.js
       open-karaoke-lyrics.js
+      audio-engine.js
   media/
     tracks/
 ```
 
-## Prerequisites
+Static file note:
 
-- Python 3.10+
-- Internet access (for CDN scripts and lyric lookup)
+- Runtime static files are taken from top-level `static/` (`STATICFILES_DIRS` in `muviz/settings.py`).
+- `muviz/static/` contains duplicates and is not the primary runtime source.
 
-Optional but recommended:
-- `syncedlyrics` package for automatic lyric search (the app calls it in `api_lyrics`)
+## Local Setup
 
-## Installation
-
-1. Create and activate a virtual environment:
+1. Create and activate virtual environment.
 
 ```bash
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-2. Install dependencies:
+2. Install dependencies.
 
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Install lyric dependency (optional but enables automatic lyric fetch):
-
-```bash
-pip install syncedlyrics
-```
-
-4. Apply migrations:
+3. Run migrations.
 
 ```bash
 python manage.py migrate
 ```
 
-5. Run the development server:
+4. Start server.
 
 ```bash
 python manage.py runserver
 ```
 
-6. Open:
+5. Open:
 
 ```text
 http://127.0.0.1:8000/
 ```
 
-## Configuration
+## Environment and Settings
 
-Core settings are in `muviz/settings.py`.
+Defined in `muviz/settings.py`.
 
-Important defaults:
-- `DEBUG = True`
-- `ALLOWED_HOSTS = ['*']`
-- max upload size: 50 MB
-- allowed upload extensions:
-  - `.mp3`, `.wav`, `.ogg`, `.flac`, `.aac`, `.m4a`, `.webm`
+- `SECRET_KEY` (required in production)
+- `DEBUG` (default: `True`)
+- `ALLOWED_HOSTS` (CSV, default: `*`)
+- `DATABASE_URL` (optional, enables non-SQLite DB)
+- `CSRF_TRUSTED_ORIGINS` (CSV)
+- `MEDIA_ROOT` (default: `<BASE_DIR>/media`)
 
-For production, change at minimum:
-- `SECRET_KEY`
-- `DEBUG`
-- `ALLOWED_HOSTS`
-- static/media serving strategy
+Upload constraints:
 
-## How the Player Works
+- Max size: 50 MB
+- Allowed extensions: `.mp3`, `.wav`, `.ogg`, `.flac`, `.aac`, `.m4a`, `.webm`
 
-The player page (`templates/visualizer/player.html`) includes:
-- audio element for playback
-- Milkdrop canvas
-- spectrum container
-- right-side customization panel
-- lyrics overlay
+## API Endpoints
 
-`static/js/visualizer-engine.js` orchestrates:
-- audio context creation
-- visualizer mode switching
-- preset loading and cycling
-- playback controls (seek, mute, fullscreen)
-- lyric fetch + sync loop
+- `GET /` -> landing page
+- `GET /play/<track_id>/` -> player page
+- `POST /api/upload/` -> upload local file
+- `POST /api/link/` -> ingest remote link (JSON or form)
+- `GET /api/presets/` -> list presets
+- `POST /api/presets/save/` -> create custom preset
+- `DELETE /api/presets/<preset_id>/delete/` -> delete non-built-in preset
+- `GET /api/lyrics/<track_id>/` -> lyrics availability + provider metadata
+- `GET /api/lyrics/<track_id>/lrc/` -> normalized LRC plain text
 
-### Default Visualizer Behavior
+## Data Models
 
-Current default mode is **Milkdrop**.
-The panel opens with Milkdrop controls active by default.
+### Track
 
-### Milkdrop Presets
+- Metadata: `title`, `artist`, `album`, `duration`
+- Storage and playback: `file`, `playback_url`, `mime_type`, `file_size`
+- Source fields: `source`, `source_url`, `source_identifier`
+- Lyrics cache: `lyrics_lrc`
+- Remote status: `preview_only`
+- Helper properties: `audio_url`, `has_audio_source`
 
-- Presets are loaded from `butterchurn-presets`
-- Favorites from `static/js/presets.js` are sorted to the top
-- Preset list supports search and keyboard navigation
+### Preset
 
-Keyboard shortcuts in player:
+- `name`
+- `config` (JSON)
+- `is_builtin`
+
+## Player Behavior
+
+Player template: `templates/visualizer/player.html`
+
+Frontend orchestration: `static/js/visualizer-engine.js`
+
+- Creates Web Audio context and media element source.
+- Initializes selected visualizer mode on demand.
+- Default mode is `milkdrop`.
+- Supports Milkdrop preset browsing/search/auto-cycle plus quality profiles and beat-reactive transitions.
+- Supports Spectrum style + gradient + reflection/radial/mirror controls.
+- Handles play/pause/seek/volume/mute/fullscreen/hide-controls.
+- Supports queue navigation controls and queue status display when multiple tracks are queued.
+- Locks interactive controls during startup preparation and unlocks after lyrics precheck/preload stage.
+- Fetches and renders LRC lyrics through `OpenKaraokeLyricsDisplay`.
+
+Keyboard shortcuts:
+
 - `Space`: play/pause
-- `L`: toggle lyrics
+- `L`: lyrics on/off
 - `F`: fullscreen
 - `H`: hide/show bottom bar
 - `N`: next Milkdrop preset
 - `P`: previous Milkdrop preset
 - `R`: random Milkdrop preset
-- `Left/Right`: seek -/+ 5s
-- `Up/Down`: volume up/down
+- `B`: toggle beat-reactive Milkdrop switching
+- `[`: previous track in queue
+- `]`: next track in queue
+- `Left/Right`: seek -/+ 5 seconds
+- `Up/Down`: volume -/+ 5%
 
-## Lyrics System
+## Lyrics Resolution Flow
 
-Lyrics endpoint: `GET /api/lyrics/<track_id>/`
+Backend service: `visualizer/services/lyrics.py`
 
-Backend behavior:
-- returns cached synced LRC when available
-- otherwise tries to fetch synced lyrics using `syncedlyrics`
-- falls back to plain lyrics if synced lyrics are not found
+Resolution order:
 
-Frontend behavior:
-- `static/js/open-karaoke-lyrics.js` renders karaoke screens
-- synced lyrics: line timing + per-word progressive highlight
-- plain lyrics: converted to estimated timed flow for smooth display
+1. Use cached `Track.lyrics_lrc` if available.
+2. Query LRCLIB (`https://lrclib.net/api/search`).
+3. Fallback to `syncedlyrics` package lookup.
+4. If only plain lyrics are found, estimate timestamps into LRC.
 
-### Open-Source Integration Note
+Frontend renderer: `static/js/open-karaoke-lyrics.js`
 
-The karaoke renderer is inspired by the MIT-licensed project:
-- `jonesy827/karaoke-lrc-player`
-
-Adapted concepts include:
-- screen-based lyric grouping
-- active line emphasis
-- progressive word highlighting
-
-## API Endpoints
-
-Base routes are defined in `visualizer/urls.py`.
-
-- `GET /` -> landing page
-- `GET /play/<track_id>/` -> visualizer player
-- `POST /api/upload/` -> upload local audio
-- `GET /api/presets/` -> list saved presets
-- `POST /api/presets/save/` -> save custom preset
-- `DELETE /api/presets/<preset_id>/delete/` -> delete non-built-in preset
-- `GET /api/lyrics/<track_id>/` -> fetch lyrics data
-
-## Data Models
-
-`Track`:
-- metadata (title, artist, album, duration)
-- file path and mime data
-- source type
-- cached synced lyric text (`lyrics_lrc`)
-
-`Preset`:
-- `name`
-- JSON `config`
-- `is_builtin`
+- Parses synced and plain lyrics.
+- Rebuilds compact/collapsed text into display tokens.
+- Computes per-word progress and highlights active word segment.
 
 ## Development Commands
 
-Run Django checks:
-
 ```bash
 python manage.py check
-```
-
-Create migrations after model changes:
-
-```bash
 python manage.py makemigrations
 python manage.py migrate
+python manage.py test
 ```
+
+Current test status in this workspace:
+
+- `python manage.py test visualizer` runs 12 tests.
+- All 12 tests are passing.
+
+## Deployment
+
+### Render
+
+- Build: `bash build.sh`
+- Start: `gunicorn muviz.wsgi:application --bind 0.0.0.0:$PORT --workers 2 --timeout 180`
+
+### Docker
+
+```bash
+docker build -t muviz .
+docker run -p 8000:8000 muviz
+```
+
+Container startup command runs `collectstatic`, `migrate`, then `gunicorn`.
 
 ## Troubleshooting
 
-### Lyrics return errors
-- Install `syncedlyrics`:
-
-```bash
-pip install syncedlyrics
-```
-
-- Some tracks may not have available synced lyrics in providers
-
-### Visualizer library does not load
-- Player depends on CDN scripts in `player.html`
-- Verify internet access and browser console errors
-
-### Uploaded file rejected
-- Check extension and file size constraints in `muviz/settings.py`
-
-## Notes
-
-- This project currently uses SQLite and debug-friendly settings.
-- Media files are stored under `media/tracks/`.
-- No production deployment configuration is included by default.
-# MuViz
+- Upload rejected: check extension/size limits in `muviz/settings.py`.
+- Visualizer not rendering: check CDN access for `butterchurn`, `butterchurn-presets`, `audiomotion-analyzer`.
+- Lyrics not available: provider may not have track data; app returns `available=false`.
+- Frontend changes not appearing: hard refresh the browser to clear cached static assets.
