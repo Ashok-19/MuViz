@@ -29,12 +29,13 @@
                 <div class="drop-backdrop"></div>
                 <span class="drop-icon">♪</span>
                 <div class="drop-text">Drop audio files here</div>
-                <div class="drop-subtext">or choose up to 10 files</div>
+                <div class="drop-subtext">or keep adding files in multiple picks</div>
                 <div class="drop-action">
                     <span class="drop-action-pill">Choose File</span>
                     <span class="drop-action-hint">Max 50 MB each</span>
                 </div>
                 <div class="drop-formats">MP3 WAV FLAC AAC M4A OGG WEBM</div>
+                <div class="upload-tip">Tip: MP3 files from Audio.com usually give better lyric availability and sync.</div>
                 <input type="file" id="fileInput" accept=".mp3,.wav,.ogg,.flac,.aac,.m4a,.webm" multiple hidden>
             </div>
 
@@ -44,6 +45,15 @@
                     <div class="selected-file-name" id="selectedFileName">No file selected</div>
                     <div class="selected-file-meta" id="selectedFileMeta">Ready for upload</div>
                 </div>
+            </div>
+
+            <div class="queued-upload" id="queuedUpload" hidden>
+                <div class="queued-upload-head">
+                    <div class="queued-upload-title" id="queuedUploadTitle">0 tracks queued</div>
+                    <button type="button" class="queued-upload-clear" id="clearQueueBtn">Clear</button>
+                </div>
+                <div class="queued-upload-list" id="queuedUploadList"></div>
+                <button type="button" class="queued-upload-start" id="startQueueBtn" disabled>Process queue and open player</button>
             </div>
 
             <div class="link-ingest">
@@ -81,5 +91,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{% static 'js/app.js' %}?v=20260318-queuefix1"></script>
+<script src="{% static 'js/app.js' %}?v=20260318-uploadqueue2"></script>
 {% endblock %}

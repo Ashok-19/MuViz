@@ -43,6 +43,34 @@
     opacity: 0;
     pointer-events: none;
 }
+
+.show-bar-btn {
+    position: fixed;
+    right: 18px;
+    bottom: 18px;
+    z-index: 56;
+    width: 42px;
+    height: 42px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 999px;
+    background: rgba(10, 10, 10, 0.84);
+    color: #e8e6e1;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
+}
+
+.show-bar-btn.visible {
+    display: inline-flex;
+}
+
+.show-bar-btn:hover {
+    background: rgba(193, 95, 60, 0.2);
+    border-color: rgba(193, 95, 60, 0.55);
+    transform: translateY(-1px);
+}
 .track-info {
     display: flex;
     align-items: center;

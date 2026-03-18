@@ -19,6 +19,7 @@
     const muteBtn = document.getElementById('muteBtn');
     const fullscreenBtn = document.getElementById('fullscreenBtn');
     const hideBarBtn = document.getElementById('hideBarBtn');
+    const showBarBtn = document.getElementById('showBarBtn');
     const prevTrackBtn = document.getElementById('prevTrackBtn');
     const nextTrackBtn = document.getElementById('nextTrackBtn');
     const queueStatusEl = document.getElementById('queueStatus');
@@ -204,6 +205,7 @@
             muteBtn,
             fullscreenBtn,
             hideBarBtn,
+            showBarBtn,
             lyricsBtn,
             seekBar,
             volumeSlider,
@@ -1332,11 +1334,28 @@
     });
 
     let barHidden = false;
-    hideBarBtn.addEventListener('click', () => {
-        barHidden = !barHidden;
+    function setBarHidden(hidden) {
+        barHidden = !!hidden;
         bottomBar.classList.toggle('hidden-bar', barHidden);
         hideBarBtn.textContent = barHidden ? '⬆' : '⬇';
+        hideBarBtn.title = barHidden ? 'Show controls' : 'Hide controls';
+
+        if (showBarBtn) {
+            showBarBtn.hidden = !barHidden;
+            showBarBtn.classList.toggle('visible', barHidden);
+        }
+    }
+
+    hideBarBtn.addEventListener('click', () => {
+        setBarHidden(!barHidden);
     });
+
+    if (showBarBtn) {
+        showBarBtn.addEventListener('click', () => {
+            setBarHidden(false);
+            showControls();
+        });
+    }
 
     if (lyricsBtn) {
         lyricsBtn.addEventListener('click', toggleLyrics);

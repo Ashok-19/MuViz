@@ -34,8 +34,7 @@
     }
 
     // ── Upload + Queue + Lyrics Prefetch ─────────
-    const MAX_QUEUE_FILES = 10;
-    const MAX_PERSISTED_QUEUE = 50;
+    const MAX_PERSISTED_QUEUE = 500;
     const QUEUE_STORAGE_KEY = 'muviz-play-queue';
     const LYRICS_STATUS_STORAGE_KEY = 'muviz-lyrics-status';
 
@@ -47,10 +46,18 @@
     const selectedFile = document.getElementById('selectedFile');
     const selectedFileName = document.getElementById('selectedFileName');
     const selectedFileMeta = document.getElementById('selectedFileMeta');
+    const queuedUpload = document.getElementById('queuedUpload');
+    const queuedUploadTitle = document.getElementById('queuedUploadTitle');
+    const queuedUploadList = document.getElementById('queuedUploadList');
+    const startQueueBtn = document.getElementById('startQueueBtn');
+    const clearQueueBtn = document.getElementById('clearQueueBtn');
     const linkForm = document.getElementById('linkForm');
     const linkInput = document.getElementById('linkInput');
     const linkSubmit = document.getElementById('linkSubmit');
     const linkStatus = document.getElementById('linkStatus');
+
+    const stagedUploads = [];
+    const stagedUploadKeys = new Set();
 
     function safeReadJSON(key, fallback) {
         try {
@@ -126,11 +133,91 @@
         progressText.textContent = text;
     }
 
-    function trimQueueFiles(files) {
-        const all = Array.from(files || []);
-        if (all.length <= MAX_QUEUE_FILES) return all;
-        showToast('Only the first ' + MAX_QUEUE_FILES + ' files were kept for queue upload.');
-        return all.slice(0, MAX_QUEUE_FILES);
+    function toUploadFileKey(file) {
+        return [file.name, file.size, file.lastModified].join('::');
+    }
+
+    function renderQueuedUploads() {
+        const count = stagedUploads.length;
+        const totalBytes = stagedUploads.reduce((sum, file) => sum + (file.size || 0), 0);
+
+        if (!count) {
+            selectedFile.hidden = true;
+            if (queuedUpload) queuedUpload.hidden = true;
+            if (startQueueBtn) startQueueBtn.disabled = true;
+            if (clearQueueBtn) clearQueueBtn.disabled = true;
+            return;
+        }
+
+        selectedFile.hidden = false;
+        selectedFileName.textContent = count + (count === 1 ? ' track queued' : ' tracks queued');
+        selectedFileMeta.textContent = formatFileSize(totalBytes) + ' total • Add more files or start processing';
+
+        if (queuedUpload) queuedUpload.hidden = false;
+        if (queuedUploadTitle) {
+            queuedUploadTitle.textContent = count + (count === 1 ? ' track queued' : ' tracks queued');
+        }
+
+        if (queuedUploadList) {
+            queuedUploadList.innerHTML = '';
+            stagedUploads.forEach(file => {
+                const item = document.createElement('div');
+                item.className = 'queued-upload-item';
+
+                const name = document.createElement('span');
+                name.className = 'queued-upload-item-name';
+                name.textContent = file.name;
+
+                const size = document.createElement('span');
+                size.className = 'queued-upload-item-size';
+                size.textContent = formatFileSize(file.size);
+
+                item.appendChild(name);
+                item.appendChild(size);
+                queuedUploadList.appendChild(item);
+            });
+        }
+
+        if (startQueueBtn) startQueueBtn.disabled = false;
+        if (clearQueueBtn) clearQueueBtn.disabled = false;
+    }
+
+    function stageUploadFiles(filesInput) {
+        const incoming = Array.from(filesInput || []);
+        if (!incoming.length) return;
+
+        let added = 0;
+        let duplicates = 0;
+
+        incoming.forEach(file => {
+            const key = toUploadFileKey(file);
+            if (stagedUploadKeys.has(key)) {
+                duplicates += 1;
+                return;
+            }
+            stagedUploadKeys.add(key);
+            stagedUploads.push(file);
+            added += 1;
+        });
+
+        renderQueuedUploads();
+
+        if (!added && duplicates) {
+            showToast('These files are already in the queued upload list.');
+            return;
+        }
+
+        if (duplicates) {
+            showToast('Added ' + added + ' file(s). Skipped ' + duplicates + ' duplicate(s).', 'success');
+        } else {
+            showToast('Added ' + added + ' file(s) to queued upload.', 'success');
+        }
+    }
+
+    function clearStagedUploads() {
+        stagedUploads.length = 0;
+        stagedUploadKeys.clear();
+        renderQueuedUploads();
     }
 
     function showSelectedFiles(files) {
@@ -186,7 +273,7 @@
     }
 
     async function uploadFiles(filesInput) {
-        const files = trimQueueFiles(filesInput);
+        const files = Array.from(filesInput || []);
         if (!files.length) return;
 
         showSelectedFiles(files);
@@ -244,33 +331,48 @@
         dropZone.classList.add('dragover');
     });
     dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
-    dropZone.addEventListener('drop', async e => {
+    dropZone.addEventListener('drop', e => {
         e.preventDefault();
         dropZone.classList.remove('dragover');
         if (!e.dataTransfer.files.length) return;
 
-        try {
-            await uploadFiles(e.dataTransfer.files);
-        } catch (error) {
-            showToast(error.message || 'Queue upload failed');
-            uploadProgress.classList.remove('active');
-            selectedFileMeta.textContent = 'Upload failed';
-        }
+        stageUploadFiles(e.dataTransfer.files);
     });
 
-    fileInput.addEventListener('change', async () => {
+    fileInput.addEventListener('change', () => {
         if (!fileInput.files.length) return;
 
-        try {
-            await uploadFiles(fileInput.files);
-        } catch (error) {
-            showToast(error.message || 'Queue upload failed');
-            uploadProgress.classList.remove('active');
-            selectedFileMeta.textContent = 'Upload failed';
-        } finally {
-            fileInput.value = '';
-        }
+        stageUploadFiles(fileInput.files);
+        fileInput.value = '';
     });
+
+    if (clearQueueBtn) {
+        clearQueueBtn.addEventListener('click', clearStagedUploads);
+    }
+
+    if (startQueueBtn) {
+        startQueueBtn.addEventListener('click', async () => {
+            if (!stagedUploads.length) {
+                showToast('Add files to the upload queue first.');
+                return;
+            }
+
+            startQueueBtn.disabled = true;
+            if (clearQueueBtn) clearQueueBtn.disabled = true;
+
+            try {
+                await uploadFiles(stagedUploads);
+            } catch (error) {
+                showToast(error.message || 'Queue upload failed');
+                uploadProgress.classList.remove('active');
+                selectedFileMeta.textContent = 'Upload failed';
+                startQueueBtn.disabled = false;
+                if (clearQueueBtn) clearQueueBtn.disabled = false;
+            }
+        });
+    }
+
+    renderQueuedUploads();
 
     function formatFileSize(bytes) {
         if (!Number.isFinite(bytes) || bytes <= 0) return 'Unknown size';
