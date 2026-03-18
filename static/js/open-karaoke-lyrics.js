@@ -97,6 +97,45 @@
             return this.buildWeightedWordTimeline(tokens, startTime, endTime);
         }
 
+        static expandEnhancedWordTimeline(words, lineStart, lineEnd) {
+            const source = Array.isArray(words) ? words.filter(Boolean) : [];
+            if (!source.length) return [];
+
+            const safeLineStart = Number.isFinite(lineStart) ? lineStart : 0;
+            const safeLineEnd = Number.isFinite(lineEnd) ? Math.max(safeLineStart, lineEnd) : safeLineStart + DEFAULT_LAST_LINE_SPAN_SEC;
+            const expanded = [];
+
+            for (let index = 0; index < source.length; index++) {
+                const currentWord = source[index];
+                const nextWord = source[index + 1];
+                const segmentStart = clamp(
+                    Number.isFinite(currentWord.timestamp) ? currentWord.timestamp : safeLineStart,
+                    safeLineStart,
+                    Math.max(safeLineStart, safeLineEnd - MIN_WORD_DURATION_SEC)
+                );
+                const segmentEnd = clamp(
+                    nextWord && Number.isFinite(nextWord.timestamp) ? nextWord.timestamp : safeLineEnd,
+                    segmentStart + MIN_WORD_DURATION_SEC,
+                    safeLineEnd
+                );
+                const tokens = this.tokenizeDisplayWords(currentWord.text);
+
+                if (tokens.length <= 1) {
+                    expanded.push({
+                        text: tokens[0] || currentWord.text,
+                        timestamp: segmentStart,
+                        duration: clamp(segmentEnd - segmentStart, MIN_WORD_DURATION_SEC, MAX_WORD_DURATION_SEC),
+                    });
+                    continue;
+                }
+
+                const retimedTokens = this.buildWeightedWordTimeline(tokens, segmentStart, segmentEnd);
+                retimedTokens.forEach(token => expanded.push(token));
+            }
+
+            return expanded;
+        }
+
         static tokenizeDisplayWords(text) {
             const normalized = this.normalizeCompactLyricText((text || '').replace(/\u00A0/g, ' ').trim());
             if (!normalized) return [];
@@ -368,11 +407,13 @@
                         const end = nextWord ? nextWord.timestamp : curr.endTime;
                         currentWord.duration = clamp(end - currentWord.timestamp, MIN_WORD_DURATION_SEC, MAX_WORD_DURATION_SEC);
                     }
+
+                    curr.words = OpenKaraokeParser.expandEnhancedWordTimeline(curr.words, curr.lineTimestamp, curr.endTime);
                 }
 
-                // If provider/parse produced collapsed words, rebuild from visible text for reliable spacing.
+                // For non-enhanced lines, rebuild from visible text when parsing produced collapsed tokens.
                 const displayTokens = OpenKaraokeParser.tokenizeDisplayWords(curr.rawText);
-                if (displayTokens.length > 1 && (curr.words.length <= 1 || displayTokens.length >= curr.words.length + 2)) {
+                if (!curr.hasEnhancedWords && displayTokens.length > 1 && (curr.words.length <= 1 || displayTokens.length >= curr.words.length + 2)) {
                     curr.words = OpenKaraokeParser.retimeWords(displayTokens, curr.lineTimestamp, curr.endTime);
                 }
             }
