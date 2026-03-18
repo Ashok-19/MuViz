@@ -1,20 +1,34 @@
 /* ═══════════════════════════════════════════════
    VISUALIZER ENGINE — MuViz
-   Orchestrates butterchurn (Milkdrop) and
-   audioMotion-analyzer (Spectrum)
+   Orchestrates butterchurn (Milkdrop),
+   audioMotion-analyzer (Spectrum), and Braccato lyrics
    ═══════════════════════════════════════════════ */
 
 (function () {
     'use strict';
 
     const audioEl = document.getElementById('audioEl');
-    const playerPage = document.getElementById('playerPage');
+    if (!audioEl) return;
 
-    // ── Audio Context (shared) ─────────────────
+    const playerPage = document.getElementById('playerPage');
+    const playBtn = document.getElementById('playBtn');
+    const seekBar = document.getElementById('seekBar');
+    const currentTimeEl = document.getElementById('currentTime');
+    const totalTimeEl = document.getElementById('totalTime');
+    const volumeSlider = document.getElementById('volumeSlider');
+    const muteBtn = document.getElementById('muteBtn');
+    const fullscreenBtn = document.getElementById('fullscreenBtn');
+    const hideBarBtn = document.getElementById('hideBarBtn');
+    const bottomBar = document.getElementById('bottomBar');
+    const lyricsOverlay = document.getElementById('lyricsOverlay');
+    const lyricsDisplay = document.getElementById('lyricsDisplay');
+    const lyricsStatus = document.getElementById('lyricsStatus');
+    const lyricsBtn = document.getElementById('lyricsBtn');
+
     let audioCtx = null;
     let sourceNode = null;
 
-    function getAudioContext() {
+    function ensureAudioPipeline() {
         if (!audioCtx) {
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             sourceNode = audioCtx.createMediaElementSource(audioEl);
@@ -23,56 +37,45 @@
         return { audioCtx, sourceNode };
     }
 
-    // ── State ──────────────────────────────────
+    async function primeAudioPipeline() {
+        const { audioCtx: ctx } = ensureAudioPipeline();
+        if (ctx.state === 'suspended') {
+            await ctx.resume();
+        }
+        ensureModeVisualizer();
+        return ctx;
+    }
+
     const engine = {
-        mode: 'milkdrop',    // 'spectrum' | 'milkdrop'
-        initialPresetApplied: false,
-        // Milkdrop
+        mode: 'milkdrop',
         milkdrop: null,
         mdCanvas: document.getElementById('milkdropCanvas'),
         mdPresets: {},
         mdPresetNames: [],
         mdCurrentIdx: 0,
+        mdInitialPresetChosen: false,
         mdBlendTime: 1.5,
         mdAutoCycle: true,
         mdCycleTime: 5,
         mdCycleTimer: null,
         mdAnimFrame: null,
-        // audioMotion
         audioMotion: null,
         amContainer: document.getElementById('spectrumContainer'),
     };
 
-    function randomIndex(length) {
-        return length > 0 ? Math.floor(Math.random() * length) : 0;
+    function updateModeButtons() {
+        document.querySelectorAll('.mode-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.mode === engine.mode);
+        });
     }
 
-    function applyRandomSpectrumPreset() {
-        if (!window.SPECTRUM_PRESETS || !window.SPECTRUM_PRESETS.length) return;
-        const preset = window.SPECTRUM_PRESETS[randomIndex(window.SPECTRUM_PRESETS.length)];
-        applySpectrumPreset(preset);
-
-        const specGrid = document.getElementById('spectrumPresetGrid');
-        if (specGrid) {
-            specGrid.querySelectorAll('.preset-card').forEach(card => {
-                const presetIdx = parseInt(card.dataset.spIdx, 10);
-                card.classList.toggle('active', window.SPECTRUM_PRESETS[presetIdx] === preset);
-            });
+    function ensureModeVisualizer() {
+        if (!audioCtx) return;
+        if (engine.mode === 'spectrum') {
+            initSpectrum();
+        } else {
+            initMilkdrop();
         }
-    }
-
-    function applyRandomMilkdropPreset() {
-        if (!engine.mdPresetNames.length) return;
-        loadMilkdropPreset(randomIndex(engine.mdPresetNames.length), 0);
-    }
-
-    function applyRandomInitialVisualizer() {
-        if (engine.initialPresetApplied) return;
-        engine.initialPresetApplied = true;
-
-        const modes = ['milkdrop', 'spectrum'];
-        const initialMode = modes[randomIndex(modes.length)];
-        setMode(initialMode);
     }
 
     // ══════════════════════════════════════════════
@@ -80,11 +83,8 @@
     // ══════════════════════════════════════════════
 
     function initSpectrum() {
-        if (engine.audioMotion) return;
+        if (engine.audioMotion || !audioCtx) return;
 
-        const { audioCtx: ctx, sourceNode: src } = getAudioContext();
-
-        // Custom gradients
         const customGradients = {
             sunset: { colorStops: ['#f12711', '#f5af19'] },
             neon: { colorStops: ['#00f260', '#0575e6', '#a100ff'] },
@@ -92,8 +92,9 @@
         };
 
         engine.audioMotion = new AudioMotionAnalyzer(engine.amContainer, {
-            source: src,
-            audioCtx: ctx,
+            source: sourceNode,
+            audioCtx,
+            start: false,
             mode: 0,
             gradient: 'orangered',
             barSpace: 0.15,
@@ -120,26 +121,40 @@
             roundBars: true,
         });
 
-        // Register custom gradients
         for (const [name, grad] of Object.entries(customGradients)) {
             engine.audioMotion.registerGradient(name, {
                 bgColor: '#050510',
-                colorStops: grad.colorStops.map((c, i, arr) => ({
-                    color: c,
-                    pos: i / (arr.length - 1),
+                colorStops: grad.colorStops.map((color, idx, arr) => ({
+                    color,
+                    pos: idx / (arr.length - 1),
                 })),
             });
         }
 
-        engine.audioMotion.gradient = 'orangered';
+        updateSpectrumUI();
+    }
 
-        if (engine.mode === 'spectrum' && engine.initialPresetApplied) {
-            applyRandomSpectrumPreset();
+    function setAudioMotionRunning(shouldRun) {
+        if (!engine.audioMotion) return;
+        try {
+            if (shouldRun) {
+                if (typeof engine.audioMotion.start === 'function') {
+                    engine.audioMotion.start();
+                } else if (typeof engine.audioMotion.toggleAnalyzer === 'function') {
+                    engine.audioMotion.toggleAnalyzer(true);
+                }
+            } else if (typeof engine.audioMotion.stop === 'function') {
+                engine.audioMotion.stop();
+            } else if (typeof engine.audioMotion.toggleAnalyzer === 'function') {
+                engine.audioMotion.toggleAnalyzer(false);
+            }
+        } catch (error) {
+            console.warn('Unable to update spectrum playback state:', error);
         }
     }
 
     function applySpectrumPreset(preset) {
-        if (!engine.audioMotion) return;
+        if (!engine.audioMotion || !preset) return;
         const am = engine.audioMotion;
         if (preset.mode !== undefined) am.mode = preset.mode;
         if (preset.gradient) am.gradient = preset.gradient;
@@ -158,24 +173,35 @@
     function updateSpectrumUI() {
         if (!engine.audioMotion) return;
         const am = engine.audioMotion;
-        const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
-        const setV = (id, v) => { const el = document.getElementById(id + 'Val'); if (el) el.textContent = v; };
-        const setC = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
+        const setValue = (id, value) => {
+            const el = document.getElementById(id);
+            if (el) el.value = value;
+        };
+        const setChecked = (id, value) => {
+            const el = document.getElementById(id);
+            if (el) el.checked = !!value;
+        };
+        const setText = (id, value) => {
+            const el = document.getElementById(id + 'Val');
+            if (el) el.textContent = value;
+        };
 
-        set('amGradient', am.gradient);
-        setC('amLedBars', am.ledBars);
-        setC('amLumiBars', am.lumiBars);
-        setC('amRadial', am.radial);
-        set('amMirror', am.mirror);
-        setC('amReflect', am.reflexRatio > 0);
-        setC('amSplitLayout', am.splitLayout);
-        set('amBarSpace', am.barSpace); setV('amBarSpace', am.barSpace);
-        set('amLineWidth', am.lineWidth); setV('amLineWidth', am.lineWidth);
-        set('amFillAlpha', am.fillAlpha); setV('amFillAlpha', am.fillAlpha);
+        setValue('amGradient', am.gradient);
+        setChecked('amLedBars', am.ledBars);
+        setChecked('amLumiBars', am.lumiBars);
+        setChecked('amRadial', am.radial);
+        setValue('amMirror', am.mirror);
+        setChecked('amReflect', am.reflexRatio > 0);
+        setChecked('amSplitLayout', am.splitLayout);
+        setValue('amBarSpace', am.barSpace);
+        setText('amBarSpace', am.barSpace);
+        setValue('amLineWidth', am.lineWidth);
+        setText('amLineWidth', am.lineWidth);
+        setValue('amFillAlpha', am.fillAlpha);
+        setText('amFillAlpha', am.fillAlpha);
 
-        // Mode buttons
-        document.querySelectorAll('.spectrum-style-btn').forEach(b => {
-            b.classList.toggle('active', parseInt(b.dataset.amMode) === am.mode);
+        document.querySelectorAll('.spectrum-style-btn').forEach(btn => {
+            btn.classList.toggle('active', parseInt(btn.dataset.amMode, 10) === am.mode);
         });
     }
 
@@ -184,18 +210,17 @@
     // ══════════════════════════════════════════════
 
     function initMilkdrop() {
-        if (engine.milkdrop) return;
+        if (engine.milkdrop || !audioCtx) return;
         if (typeof butterchurn === 'undefined') {
             console.warn('butterchurn not loaded');
             return;
         }
 
-        const { audioCtx: ctx, sourceNode: src } = getAudioContext();
         const canvas = engine.mdCanvas;
-        canvas.width = window.innerWidth * (window.devicePixelRatio || 1);
-        canvas.height = window.innerHeight * (window.devicePixelRatio || 1);
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = window.innerWidth * dpr;
+        canvas.height = window.innerHeight * dpr;
 
-        // Resolve butterchurn API (handle UMD .default wrapping)
         let createVis = null;
         if (butterchurn.createVisualizer) {
             createVis = butterchurn.createVisualizer.bind(butterchurn);
@@ -208,24 +233,19 @@
         }
 
         try {
-            engine.milkdrop = createVis(ctx, canvas, {
+            engine.milkdrop = createVis(audioCtx, canvas, {
                 width: canvas.width,
                 height: canvas.height,
-                pixelRatio: window.devicePixelRatio || 1,
+                pixelRatio: dpr,
                 textureRatio: 1,
             });
-            engine.milkdrop.connectAudio(src);
+            engine.milkdrop.connectAudio(sourceNode);
 
-            // Resolve presets (handle all possible UMD patterns)
             let presets = null;
             if (typeof butterchurnPresets !== 'undefined') {
                 const bp = butterchurnPresets.default || butterchurnPresets;
                 if (typeof bp.getPresets === 'function') {
                     presets = bp.getPresets();
-                } else if (typeof bp === 'function') {
-                    try { presets = bp(); } catch (_) {
-                        try { presets = new bp(); } catch (__) { /* not a class */ }
-                    }
                 } else if (typeof bp === 'object') {
                     presets = bp;
                 }
@@ -233,45 +253,42 @@
 
             if (presets && typeof presets === 'object') {
                 engine.mdPresets = presets;
-                const names = Object.keys(presets);
-                const favoriteSet = new Set((window.MILKDROP_FAVORITES || []).map(name => name.toLowerCase()));
-                engine.mdPresetNames = names.sort((a, b) => {
-                    const aFav = favoriteSet.has(a.toLowerCase()) ? 0 : 1;
-                    const bFav = favoriteSet.has(b.toLowerCase()) ? 0 : 1;
-                    if (aFav !== bFav) return aFav - bFav;
-                    return a.localeCompare(b);
-                });
+                engine.mdPresetNames = Object.keys(presets).sort((a, b) => a.localeCompare(b));
             }
 
-            if (engine.mode === 'milkdrop' && engine.initialPresetApplied) {
-                applyRandomMilkdropPreset();
-            } else if (engine.mdPresetNames.length > 0) {
-                loadMilkdropPreset(0, 0);
+            if (engine.mdPresetNames.length > 0) {
+                if (!engine.mdInitialPresetChosen) {
+                    engine.mdCurrentIdx = Math.floor(Math.random() * engine.mdPresetNames.length);
+                    engine.mdInitialPresetChosen = true;
+                }
+                loadMilkdropPreset(engine.mdCurrentIdx, 0);
             }
 
-            console.log('Milkdrop initialized:', engine.mdPresetNames.length, 'presets');
             buildMilkdropPresetList();
-        } catch (e) {
-            console.error('Milkdrop init failed:', e);
+            console.log('Milkdrop initialized:', engine.mdPresetNames.length, 'presets');
+        } catch (error) {
+            console.error('Milkdrop init failed:', error);
         }
     }
 
     function loadMilkdropPreset(index, blendTime) {
         if (!engine.milkdrop || engine.mdPresetNames.length === 0) return;
-        index = ((index % engine.mdPresetNames.length) + engine.mdPresetNames.length) % engine.mdPresetNames.length;
-        engine.mdCurrentIdx = index;
-        const name = engine.mdPresetNames[index];
+        const length = engine.mdPresetNames.length;
+        const safeIndex = ((index % length) + length) % length;
+        engine.mdCurrentIdx = safeIndex;
+        const name = engine.mdPresetNames[safeIndex];
         const preset = engine.mdPresets[name];
         if (preset) {
             engine.milkdrop.loadPreset(preset, blendTime);
         }
-        // Update active state in list
-        document.querySelectorAll('.md-preset-item').forEach((el, i) => {
-            el.classList.toggle('active', parseInt(el.dataset.idx, 10) === index);
+
+        document.querySelectorAll('.md-preset-item').forEach(item => {
+            item.classList.toggle('active', parseInt(item.dataset.idx, 10) === safeIndex);
         });
-        // Scroll into view
-        const activeEl = document.querySelector('.md-preset-item.active');
-        if (activeEl) activeEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        const activeItem = document.querySelector('.md-preset-item.active');
+        if (activeItem) {
+            activeItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
     }
 
     function nextMilkdropPreset() {
@@ -285,13 +302,14 @@
     }
 
     function randomMilkdropPreset() {
-        const idx = Math.floor(Math.random() * engine.mdPresetNames.length);
-        loadMilkdropPreset(idx, engine.mdBlendTime);
+        if (!engine.mdPresetNames.length) return;
+        const index = Math.floor(Math.random() * engine.mdPresetNames.length);
+        loadMilkdropPreset(index, engine.mdBlendTime);
     }
 
     function resetCycleTimer() {
         clearInterval(engine.mdCycleTimer);
-        if (engine.mdAutoCycle && !audioEl.paused) {
+        if (engine.mdAutoCycle && !audioEl.paused && engine.mode === 'milkdrop') {
             engine.mdCycleTimer = setInterval(() => {
                 randomMilkdropPreset();
             }, engine.mdCycleTime * 1000);
@@ -315,16 +333,55 @@
     }
 
     function startMilkdropRender() {
-        if (engine.mdAnimFrame || audioEl.paused || engine.mode !== 'milkdrop') return;
+        if (engine.mdAnimFrame || audioEl.paused || engine.mode !== 'milkdrop' || !engine.milkdrop) return;
         engine.mdAnimFrame = requestAnimationFrame(renderMilkdrop);
+    }
+
+    function buildMilkdropPresetList(filter = '') {
+        const list = document.getElementById('mdPresetList');
+        if (!list) return;
+        const filterText = filter.toLowerCase();
+        list.innerHTML = '';
+        engine.mdPresetNames.forEach((name, index) => {
+            if (filterText && !name.toLowerCase().includes(filterText)) return;
+            const item = document.createElement('div');
+            item.className = 'md-preset-item';
+            item.dataset.idx = String(index);
+            item.textContent = name;
+            item.title = name;
+            if (index === engine.mdCurrentIdx) item.classList.add('active');
+            list.appendChild(item);
+        });
+    }
+
+    // ══════════════════════════════════════════════
+    //  MODE SWITCHING
+    // ══════════════════════════════════════════════
+
+    function setMode(mode) {
+        engine.mode = mode === 'spectrum' ? 'spectrum' : 'milkdrop';
+        engine.amContainer.classList.toggle('mode-active', engine.mode === 'spectrum');
+        engine.mdCanvas.style.display = engine.mode === 'milkdrop' ? 'block' : 'none';
+
+        const spectrumControls = document.getElementById('spectrumControls');
+        const milkdropControls = document.getElementById('milkdropControls');
+        if (spectrumControls) spectrumControls.style.display = engine.mode === 'spectrum' ? '' : 'none';
+        if (milkdropControls) milkdropControls.style.display = engine.mode === 'milkdrop' ? '' : 'none';
+
+        updateModeButtons();
+        ensureModeVisualizer();
+        syncVisualizerPlayback();
     }
 
     function syncVisualizerPlayback() {
         const isPlaying = !audioEl.paused;
 
-        if (engine.audioMotion) {
-            engine.audioMotion.isOn = isPlaying && engine.mode === 'spectrum';
+        if (engine.mode === 'spectrum') {
+            stopMilkdropRender();
+            clearInterval(engine.mdCycleTimer);
         }
+
+        setAudioMotionRunning(isPlaying && engine.mode === 'spectrum');
 
         if (engine.mode === 'milkdrop') {
             if (isPlaying) {
@@ -337,193 +394,15 @@
         }
     }
 
-    function buildMilkdropPresetList(filter = '') {
-        const list = document.getElementById('mdPresetList');
-        if (!list) return;
-        const filterLower = filter.toLowerCase();
-        list.innerHTML = '';
-        engine.mdPresetNames.forEach((name, i) => {
-            if (filterLower && !name.toLowerCase().includes(filterLower)) return;
-            const item = document.createElement('div');
-            item.className = 'md-preset-item';
-            if (i === engine.mdCurrentIdx) item.classList.add('active');
-            item.dataset.idx = String(i);
-            item.title = name;
-            item.textContent = name;
-            list.appendChild(item);
-        });
-    }
-
-    // ══════════════════════════════════════════════
-    //  MODE SWITCHING
-    // ══════════════════════════════════════════════
-
-    function setMode(mode) {
-        engine.mode = mode;
-
-        // Toggle canvases
-        engine.amContainer.classList.toggle('mode-active', mode === 'spectrum');
-        engine.mdCanvas.style.display = mode === 'milkdrop' ? 'block' : 'none';
-
-        // Toggle control panels
-        const specCtrl = document.getElementById('spectrumControls');
-        const mdCtrl = document.getElementById('milkdropControls');
-        if (specCtrl) specCtrl.style.display = mode === 'spectrum' ? '' : 'none';
-        if (mdCtrl) mdCtrl.style.display = mode === 'milkdrop' ? '' : 'none';
-
-        // Mode buttons
-        document.querySelectorAll('.mode-btn').forEach(b => {
-            b.classList.toggle('active', b.dataset.mode === mode);
-        });
-
-        if (mode === 'spectrum') {
-            initSpectrum();
-            stopMilkdropRender();
-            clearInterval(engine.mdCycleTimer);
-        } else {
-            initMilkdrop();
-            syncVisualizerPlayback();
-        }
-
-        // Keep renderer state consistent with current playback on every mode change.
-        syncVisualizerPlayback();
-    }
-
-    // ══════════════════════════════════════════════
-    //  UI BINDINGS
-    // ══════════════════════════════════════════════
-
-    function bindControls() {
-        // ── Mode toggle ────────────────────────
-        document.querySelectorAll('.mode-btn').forEach(btn => {
-            btn.addEventListener('click', () => setMode(btn.dataset.mode));
-        });
-
-        // ── Panel toggle ───────────────────────
-        const panel = document.getElementById('controlPanel');
-        const toggle = document.getElementById('panelToggle');
-        const close = document.getElementById('panelClose');
-        let panelOpen = false;
-
-        toggle.addEventListener('click', () => {
-            panelOpen = !panelOpen;
-            panel.classList.toggle('open', panelOpen);
-            toggle.classList.toggle('active', panelOpen);
-        });
-        close.addEventListener('click', () => {
-            panelOpen = false;
-            panel.classList.remove('open');
-            toggle.classList.remove('active');
-        });
-
-        // ── Spectrum controls ──────────────────
-        // Mode selector
-        document.querySelectorAll('.spectrum-style-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                document.querySelectorAll('.spectrum-style-btn').forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-                if (engine.audioMotion) engine.audioMotion.mode = parseInt(btn.dataset.amMode);
-            });
-        });
-
-        // Gradient
-        bindSelect('amGradient', v => { if (engine.audioMotion) engine.audioMotion.gradient = v; });
-
-        // Toggles
-        bindToggle('amLedBars', v => { if (engine.audioMotion) engine.audioMotion.ledBars = v; });
-        bindToggle('amLumiBars', v => { if (engine.audioMotion) engine.audioMotion.lumiBars = v; });
-        bindToggle('amRadial', v => { if (engine.audioMotion) engine.audioMotion.radial = v; });
-        bindToggle('amReflect', v => { if (engine.audioMotion) engine.audioMotion.reflexRatio = v ? 0.35 : 0; });
-        bindToggle('amSplitLayout', v => { if (engine.audioMotion) engine.audioMotion.splitLayout = v; });
-        bindSelect('amMirror', v => { if (engine.audioMotion) engine.audioMotion.mirror = parseInt(v); });
-
-        bindSlider('amBarSpace', v => { if (engine.audioMotion) engine.audioMotion.barSpace = parseFloat(v); });
-        bindSlider('amLineWidth', v => { if (engine.audioMotion) engine.audioMotion.lineWidth = parseFloat(v); });
-        bindSlider('amFillAlpha', v => { if (engine.audioMotion) engine.audioMotion.fillAlpha = parseFloat(v); });
-
-        // Spectrum presets
-        const specGrid = document.getElementById('spectrumPresetGrid');
-        if (specGrid && window.SPECTRUM_PRESETS) {
-            specGrid.innerHTML = SPECTRUM_PRESETS.map((p, i) =>
-                `<div class="preset-card" data-sp-idx="${i}">${p.name}</div>`
-            ).join('');
-            specGrid.addEventListener('click', e => {
-                const card = e.target.closest('.preset-card');
-                if (!card) return;
-                specGrid.querySelectorAll('.preset-card').forEach(c => c.classList.remove('active'));
-                card.classList.add('active');
-                applySpectrumPreset(SPECTRUM_PRESETS[parseInt(card.dataset.spIdx)]);
-            });
-        }
-
-        // ── Milkdrop controls ──────────────────
-        // Preset search
-        const mdSearch = document.getElementById('mdPresetSearch');
-        if (mdSearch) {
-            mdSearch.addEventListener('input', () => buildMilkdropPresetList(mdSearch.value));
-        }
-
-        // Preset list click
-        const mdList = document.getElementById('mdPresetList');
-        if (mdList) {
-            mdList.addEventListener('click', e => {
-                const item = e.target.closest('.md-preset-item');
-                if (!item) return;
-                loadMilkdropPreset(parseInt(item.dataset.idx), engine.mdBlendTime);
-            });
-        }
-
-        // Auto-cycle
-        bindToggle('mdAutoCycle', v => {
-            engine.mdAutoCycle = v;
-            resetCycleTimer();
-        });
-        bindSlider('mdCycleTime', v => {
-            engine.mdCycleTime = parseInt(v, 10);
-            resetCycleTimer();
-        });
-        bindSlider('mdBlendTime', v => {
-            engine.mdBlendTime = parseFloat(v);
-        });
-    }
-
-    // ── Helper binders ─────────────────────────
-    function bindSelect(id, cb) {
-        const el = document.getElementById(id);
-        if (el) el.addEventListener('change', () => cb(el.value));
-    }
-    function bindToggle(id, cb) {
-        const el = document.getElementById(id);
-        if (el) el.addEventListener('change', () => cb(el.checked));
-    }
-    function bindSlider(id, cb) {
-        const el = document.getElementById(id);
-        const valEl = document.getElementById(id + 'Val');
-        if (el) el.addEventListener('input', () => {
-            if (valEl) valEl.textContent = el.value;
-            cb(el.value);
-        });
-    }
-
     // ══════════════════════════════════════════════
     //  PLAYBACK CONTROLS
     // ══════════════════════════════════════════════
 
-    const playBtn = document.getElementById('playBtn');
-    const seekBar = document.getElementById('seekBar');
-    const currentTimeEl = document.getElementById('currentTime');
-    const totalTimeEl = document.getElementById('totalTime');
-    const volumeSlider = document.getElementById('volumeSlider');
-    const muteBtn = document.getElementById('muteBtn');
-    const fullscreenBtn = document.getElementById('fullscreenBtn');
-    const hideBarBtn = document.getElementById('hideBarBtn');
-    const bottomBar = document.getElementById('bottomBar');
-
-    function formatTime(s) {
-        if (isNaN(s)) return '0:00';
-        const m = Math.floor(s / 60);
-        const sec = Math.floor(s % 60);
-        return m + ':' + (sec < 10 ? '0' : '') + sec;
+    function formatTime(value) {
+        if (!Number.isFinite(value) || value < 0) return '0:00';
+        const minutes = Math.floor(value / 60);
+        const seconds = Math.floor(value % 60);
+        return minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
     }
 
     function getKnownDuration() {
@@ -532,10 +411,7 @@
             return mediaDuration;
         }
         const trackDuration = Number(window.TRACK && window.TRACK.duration);
-        if (Number.isFinite(trackDuration) && trackDuration > 0) {
-            return trackDuration;
-        }
-        return 0;
+        return Number.isFinite(trackDuration) && trackDuration > 0 ? trackDuration : 0;
     }
 
     function syncDurationUI() {
@@ -546,16 +422,259 @@
         }
     }
 
-    playBtn.addEventListener('click', async () => {
-        getAudioContext(); // ensure ctx created on user gesture
-        if (audioCtx.state === 'suspended') await audioCtx.resume();
+    function syncVolumeUI() {
+        muteBtn.textContent = audioEl.volume > 0 ? '🔊' : '🔇';
+    }
 
-        if (!audioEl.paused) {
-            audioEl.pause();
-        } else {
-            await audioEl.play();
+    async function togglePlayback() {
+        try {
+            await primeAudioPipeline();
+            if (!audioEl.paused) {
+                audioEl.pause();
+            } else {
+                await audioEl.play();
+            }
+        } catch (error) {
+            console.error('Playback failed:', error);
         }
-    });
+    }
+
+    // ══════════════════════════════════════════════
+    //  LYRICS
+    // ══════════════════════════════════════════════
+
+    const lyrics = {
+        active: false,
+        fetched: false,
+        available: null,
+        synced: false,
+        renderer: null,
+        rafId: null,
+        syncAdvanceSec: 0.12,
+    };
+
+    if (window.OpenKaraokeLyricsDisplay && lyricsDisplay) {
+        lyrics.renderer = new window.OpenKaraokeLyricsDisplay(lyricsDisplay);
+    }
+
+    function showLyricsStatus(message, timeout = 2400) {
+        if (!lyricsStatus) return;
+        lyricsStatus.textContent = message;
+        lyricsStatus.classList.add('visible');
+        if (timeout > 0) {
+            window.clearTimeout(showLyricsStatus.timerId);
+            showLyricsStatus.timerId = window.setTimeout(() => {
+                lyricsStatus.classList.remove('visible');
+            }, timeout);
+        }
+    }
+
+    async function fetchLyrics() {
+        if (lyrics.fetched || !window.TRACK || !window.TRACK.lyricsUrl) return;
+        lyrics.fetched = true;
+
+        if (!lyrics.renderer) {
+            lyrics.fetched = false;
+            lyrics.available = false;
+            showLyricsStatus('Lyrics renderer unavailable');
+            return;
+        }
+
+        try {
+            showLyricsStatus('Fetching lyrics...', 0);
+            const response = await fetch(window.TRACK.lyricsUrl, {
+                headers: {
+                    Accept: 'text/plain',
+                },
+            });
+
+            if (!response.ok) {
+                throw new Error('lyrics-not-found');
+            }
+
+            const lrcText = (await response.text()).trim();
+            if (!lrcText) {
+                throw new Error('lyrics-empty');
+            }
+
+            lyrics.renderer.loadSyncedLRC(lrcText);
+            lyrics.synced = true;
+            lyrics.available = true;
+            showLyricsStatus('Synced lyrics loaded');
+        } catch (error) {
+            lyrics.fetched = false;
+            lyrics.available = false;
+            showLyricsStatus('No lyrics found for this track');
+        }
+    }
+
+    function startLyricsSync() {
+        if (lyrics.rafId || !lyrics.renderer) return;
+
+        const tick = () => {
+            if (!lyrics.active) {
+                lyrics.rafId = null;
+                return;
+            }
+
+            if (lyrics.available) {
+                lyrics.renderer.update(Math.max(0, audioEl.currentTime + lyrics.syncAdvanceSec));
+            }
+
+            lyrics.rafId = window.requestAnimationFrame(tick);
+        };
+
+        lyrics.rafId = window.requestAnimationFrame(tick);
+    }
+
+    function stopLyricsSync() {
+        if (!lyrics.rafId) return;
+        window.cancelAnimationFrame(lyrics.rafId);
+        lyrics.rafId = null;
+    }
+
+    function toggleLyrics() {
+        if (!lyricsOverlay || !lyricsBtn || !lyricsDisplay) return;
+        lyrics.active = !lyrics.active;
+        lyricsOverlay.classList.toggle('active', lyrics.active);
+        lyricsBtn.classList.toggle('active', lyrics.active);
+
+        if (lyrics.active) {
+            fetchLyrics();
+            startLyricsSync();
+        } else {
+            stopLyricsSync();
+        }
+    }
+
+    // ══════════════════════════════════════════════
+    //  UI BINDINGS
+    // ══════════════════════════════════════════════
+
+    function bindSelect(id, callback) {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('change', () => callback(el.value));
+        }
+    }
+
+    function bindToggle(id, callback) {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('change', () => callback(el.checked));
+        }
+    }
+
+    function bindSlider(id, callback) {
+        const el = document.getElementById(id);
+        const valueEl = document.getElementById(id + 'Val');
+        if (el) {
+            el.addEventListener('input', () => {
+                if (valueEl) valueEl.textContent = el.value;
+                callback(el.value);
+            });
+        }
+    }
+
+    function bindControls() {
+        document.querySelectorAll('.mode-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                try {
+                    await primeAudioPipeline();
+                } catch (_) {
+                    // The user can still switch UI state before playback starts.
+                }
+                setMode(btn.dataset.mode);
+            });
+        });
+
+        const panel = document.getElementById('controlPanel');
+        const panelToggle = document.getElementById('panelToggle');
+        const panelClose = document.getElementById('panelClose');
+        let panelOpen = false;
+
+        if (panelToggle && panel) {
+            panelToggle.addEventListener('click', () => {
+                panelOpen = !panelOpen;
+                panel.classList.toggle('open', panelOpen);
+                panelToggle.classList.toggle('active', panelOpen);
+            });
+        }
+        if (panelClose && panelToggle && panel) {
+            panelClose.addEventListener('click', () => {
+                panelOpen = false;
+                panel.classList.remove('open');
+                panelToggle.classList.remove('active');
+            });
+        }
+
+        document.querySelectorAll('.spectrum-style-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                if (!engine.audioMotion) return;
+                engine.audioMotion.mode = parseInt(btn.dataset.amMode, 10);
+                updateSpectrumUI();
+            });
+        });
+
+        bindSelect('amGradient', value => { if (engine.audioMotion) engine.audioMotion.gradient = value; });
+        bindToggle('amLedBars', value => { if (engine.audioMotion) engine.audioMotion.ledBars = value; });
+        bindToggle('amLumiBars', value => { if (engine.audioMotion) engine.audioMotion.lumiBars = value; });
+        bindToggle('amRadial', value => { if (engine.audioMotion) engine.audioMotion.radial = value; });
+        bindToggle('amReflect', value => { if (engine.audioMotion) engine.audioMotion.reflexRatio = value ? 0.35 : 0; });
+        bindToggle('amSplitLayout', value => { if (engine.audioMotion) engine.audioMotion.splitLayout = value; });
+        bindSelect('amMirror', value => { if (engine.audioMotion) engine.audioMotion.mirror = parseInt(value, 10); });
+        bindSlider('amBarSpace', value => { if (engine.audioMotion) engine.audioMotion.barSpace = parseFloat(value); });
+        bindSlider('amLineWidth', value => { if (engine.audioMotion) engine.audioMotion.lineWidth = parseFloat(value); });
+        bindSlider('amFillAlpha', value => { if (engine.audioMotion) engine.audioMotion.fillAlpha = parseFloat(value); });
+
+        const spectrumGrid = document.getElementById('spectrumPresetGrid');
+        if (spectrumGrid && window.SPECTRUM_PRESETS) {
+            spectrumGrid.innerHTML = SPECTRUM_PRESETS.map((preset, idx) =>
+                `<div class="preset-card" data-sp-idx="${idx}">${preset.name}</div>`
+            ).join('');
+            spectrumGrid.addEventListener('click', event => {
+                const card = event.target.closest('.preset-card');
+                if (!card) return;
+                spectrumGrid.querySelectorAll('.preset-card').forEach(el => el.classList.remove('active'));
+                card.classList.add('active');
+                applySpectrumPreset(SPECTRUM_PRESETS[parseInt(card.dataset.spIdx, 10)]);
+            });
+        }
+
+        const milkdropSearch = document.getElementById('mdPresetSearch');
+        if (milkdropSearch) {
+            milkdropSearch.addEventListener('input', () => buildMilkdropPresetList(milkdropSearch.value));
+        }
+
+        const milkdropList = document.getElementById('mdPresetList');
+        if (milkdropList) {
+            milkdropList.addEventListener('click', event => {
+                const item = event.target.closest('.md-preset-item');
+                if (!item) return;
+                loadMilkdropPreset(parseInt(item.dataset.idx, 10), engine.mdBlendTime);
+            });
+        }
+
+        bindToggle('mdAutoCycle', value => {
+            engine.mdAutoCycle = value;
+            resetCycleTimer();
+        });
+        bindSlider('mdCycleTime', value => {
+            engine.mdCycleTime = parseInt(value, 10);
+            resetCycleTimer();
+        });
+        bindSlider('mdBlendTime', value => {
+            engine.mdBlendTime = parseFloat(value);
+        });
+    }
+
+    // ══════════════════════════════════════════════
+    //  EVENT LISTENERS
+    // ══════════════════════════════════════════════
+
+    if (playBtn) {
+        playBtn.addEventListener('click', togglePlayback);
+    }
 
     audioEl.addEventListener('play', () => {
         playBtn.textContent = '⏸';
@@ -580,30 +699,30 @@
         currentTimeEl.textContent = formatTime(audioEl.currentTime);
         seekBar.value = audioEl.currentTime;
     });
+
     seekBar.addEventListener('input', () => {
-        audioEl.currentTime = parseFloat(seekBar.value);
+        audioEl.currentTime = parseFloat(seekBar.value || '0');
     });
 
-    // Initialize seek UI even if media metadata loaded before listeners were attached.
-    syncDurationUI();
     audioEl.volume = parseFloat(volumeSlider.value || '0.8');
-    muteBtn.textContent = audioEl.volume > 0 ? '🔊' : '🔇';
+    syncVolumeUI();
+
     volumeSlider.addEventListener('input', () => {
-        audioEl.volume = parseFloat(volumeSlider.value);
-        muteBtn.textContent = audioEl.volume > 0 ? '🔊' : '🔇';
+        audioEl.volume = parseFloat(volumeSlider.value || '0');
+        syncVolumeUI();
     });
-    let prevVolume = 0.8;
+
+    let previousVolume = audioEl.volume || 0.8;
     muteBtn.addEventListener('click', () => {
         if (audioEl.volume > 0) {
-            prevVolume = audioEl.volume;
+            previousVolume = audioEl.volume;
             audioEl.volume = 0;
             volumeSlider.value = 0;
-            muteBtn.textContent = '🔇';
         } else {
-            audioEl.volume = prevVolume;
-            volumeSlider.value = prevVolume;
-            muteBtn.textContent = '🔊';
+            audioEl.volume = previousVolume;
+            volumeSlider.value = previousVolume;
         }
+        syncVolumeUI();
     });
 
     fullscreenBtn.addEventListener('click', () => {
@@ -621,172 +740,76 @@
         hideBarBtn.textContent = barHidden ? '⬆' : '⬇';
     });
 
-    // Auto-hide controls
-    let hideTimer;
+    if (lyricsBtn) {
+        lyricsBtn.addEventListener('click', toggleLyrics);
+    }
+
+    let hideTimer = null;
     function showControls() {
         playerPage.classList.add('controls-visible');
         clearTimeout(hideTimer);
-        hideTimer = setTimeout(() => {
+        hideTimer = window.setTimeout(() => {
             if (!audioEl.paused) {
                 playerPage.classList.remove('controls-visible');
             }
         }, 3000);
     }
+
     playerPage.addEventListener('mousemove', showControls);
     playerPage.addEventListener('click', showControls);
 
-    // ══════════════════════════════════════════════
-    //  LYRICS SYSTEM
-    // ══════════════════════════════════════════════
+    document.addEventListener('keydown', event => {
+        const tagName = event.target.tagName;
+        if (tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT') return;
 
-    const lyrics = {
-        active: false,
-        fetched: false,
-        available: false,
-        synced: false,
-        // Render lyrics slightly ahead of audio clock to offset provider lag.
-        syncAdvanceSec: 0.14,
-        renderer: null,
-        rafId: null,
-    };
-
-    const lyricsOverlay = document.getElementById('lyricsOverlay');
-    const lyricsScroll = document.getElementById('lyricsScroll');
-    const lyricsStatus = document.getElementById('lyricsStatus');
-    const lyricsBtn = document.getElementById('lyricsBtn');
-
-    if (window.OpenKaraokeLyricsDisplay && lyricsScroll) {
-        lyrics.renderer = new window.OpenKaraokeLyricsDisplay(lyricsScroll, {
-            maxLinesPerScreen: 4,
-        });
-    }
-
-    // ── Fetch Lyrics ───────────────────────────
-    async function fetchLyrics() {
-        if (lyrics.fetched) return;
-        lyrics.fetched = true;
-
-        if (!lyrics.renderer) {
-            lyrics.fetched = false;
-            showLyricsStatus('Lyrics renderer unavailable');
-            setTimeout(() => hideLyricsStatus(), 2500);
-            return;
-        }
-
-        showLyricsStatus('Fetching lyrics...');
-
-        try {
-            const resp = await fetch(`/api/lyrics/${window.TRACK.id}/`);
-            const data = await resp.json();
-
-            if (data.lyrics && data.synced) {
-                lyrics.synced = true;
-                lyrics.renderer.loadSyncedLRC(data.lyrics);
-                lyrics.available = true;
-                showLyricsStatus('Synced karaoke lyrics loaded');
-                setTimeout(() => hideLyricsStatus(), 2000);
-            } else if (data.lyrics && !data.synced) {
-                // Plain lyrics are converted to timed karaoke flow using reading-speed estimation.
-                lyrics.synced = false;
-                lyrics.renderer.loadPlainLyrics(data.lyrics);
-                lyrics.available = true;
-                showLyricsStatus('Plain lyrics converted to karaoke mode');
-                setTimeout(() => hideLyricsStatus(), 3000);
-            } else {
-                lyrics.available = false;
-                showLyricsStatus(data.error || 'No lyrics found');
-                setTimeout(() => hideLyricsStatus(), 3000);
-            }
-        } catch (err) {
-            lyrics.available = false;
-            lyrics.fetched = false;
-            showLyricsStatus('Failed to fetch lyrics');
-            setTimeout(() => hideLyricsStatus(), 3000);
-        }
-    }
-
-    function showLyricsStatus(msg) {
-        if (lyricsStatus) {
-            lyricsStatus.textContent = msg;
-            lyricsStatus.classList.add('visible');
-        }
-    }
-    function hideLyricsStatus() {
-        if (lyricsStatus) lyricsStatus.classList.remove('visible');
-    }
-
-    // Sync loop
-    function startLyricsSync() {
-        if (lyrics.rafId || !lyrics.renderer) return;
-        const tick = () => {
-            if (!lyrics.active) {
-                lyrics.rafId = null;
-                return;
-            }
-            if (lyrics.available) {
-                lyrics.renderer.update(Math.max(0, audioEl.currentTime + lyrics.syncAdvanceSec));
-            }
-            lyrics.rafId = requestAnimationFrame(tick);
-        };
-        lyrics.rafId = requestAnimationFrame(tick);
-    }
-
-    function stopLyricsSync() {
-        if (lyrics.rafId) {
-            cancelAnimationFrame(lyrics.rafId);
-            lyrics.rafId = null;
-        }
-    }
-
-    // ── Toggle lyrics ──────────────────────────
-    function toggleLyrics() {
-        if (!lyricsOverlay || !lyricsBtn) return;
-        lyrics.active = !lyrics.active;
-        lyricsOverlay.classList.toggle('active', lyrics.active);
-        lyricsBtn.classList.toggle('active', lyrics.active);
-
-        if (lyrics.active) {
-            fetchLyrics();
-            startLyricsSync();
-        } else {
-            stopLyricsSync();
-        }
-    }
-
-    if (lyricsBtn) {
-        lyricsBtn.addEventListener('click', toggleLyrics);
-    }
-
-    // ── Keyboard ───────────────────────────────
-    document.addEventListener('keydown', e => {
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
-        switch (e.key) {
+        switch (event.key) {
             case ' ':
-                e.preventDefault(); playBtn.click(); break;
-            case 'f': case 'F':
-                fullscreenBtn.click(); break;
-            case 'h': case 'H':
-                hideBarBtn.click(); break;
-            case 'n': case 'N':
-                if (engine.mode === 'milkdrop') nextMilkdropPreset(); break;
-            case 'p': case 'P':
-                if (engine.mode === 'milkdrop') prevMilkdropPreset(); break;
-            case 'r': case 'R':
-                if (engine.mode === 'milkdrop') randomMilkdropPreset(); break;
+                event.preventDefault();
+                togglePlayback();
+                break;
+            case 'f':
+            case 'F':
+                fullscreenBtn.click();
+                break;
+            case 'h':
+            case 'H':
+                hideBarBtn.click();
+                break;
+            case 'l':
+            case 'L':
+                toggleLyrics();
+                break;
+            case 'n':
+            case 'N':
+                if (engine.mode === 'milkdrop') nextMilkdropPreset();
+                break;
+            case 'p':
+            case 'P':
+                if (engine.mode === 'milkdrop') prevMilkdropPreset();
+                break;
+            case 'r':
+            case 'R':
+                if (engine.mode === 'milkdrop') randomMilkdropPreset();
+                break;
             case 'ArrowLeft':
-                audioEl.currentTime = Math.max(0, audioEl.currentTime - 5); break;
+                audioEl.currentTime = Math.max(0, audioEl.currentTime - 5);
+                break;
             case 'ArrowRight':
-                audioEl.currentTime = Math.min(audioEl.duration, audioEl.currentTime + 5); break;
+                audioEl.currentTime = Math.min(getKnownDuration(), audioEl.currentTime + 5);
+                break;
             case 'ArrowUp':
                 audioEl.volume = Math.min(1, audioEl.volume + 0.05);
-                volumeSlider.value = audioEl.volume; break;
+                volumeSlider.value = audioEl.volume;
+                syncVolumeUI();
+                break;
             case 'ArrowDown':
                 audioEl.volume = Math.max(0, audioEl.volume - 0.05);
-                volumeSlider.value = audioEl.volume; break;
+                volumeSlider.value = audioEl.volume;
+                syncVolumeUI();
+                break;
         }
     });
 
-    // ── Window resize ──────────────────────────
     window.addEventListener('resize', () => {
         if (engine.milkdrop) {
             const dpr = window.devicePixelRatio || 1;
@@ -796,7 +819,7 @@
         }
     });
 
-    // ── Initialize ─────────────────────────────
     bindControls();
-    applyRandomInitialVisualizer();
+    syncDurationUI();
+    setMode('milkdrop');
 })();

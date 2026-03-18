@@ -32,9 +32,11 @@
         display: block;
         padding-right: 4px;
     }
-    .milkdrop-presets::-webkit-scrollbar { width: 4px; }
-    .milkdrop-presets::-webkit-scrollbar-track { background: transparent; }
-    .milkdrop-presets::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
+    @supports selector(::-webkit-scrollbar) {
+        .milkdrop-presets::-webkit-scrollbar { width: 4px; }
+        .milkdrop-presets::-webkit-scrollbar-track { background: transparent; }
+        .milkdrop-presets::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
+    }
     .md-preset-item {
         display: block;
         padding: 8px 10px;
@@ -127,7 +129,7 @@
         padding: 4px 0;
     }
 
-    /* ── Lyrics Overlay (Open Karaoke Renderer) ── */
+    /* ── Lyrics Overlay ───────────────────────── */
     .lyrics-overlay {
         position: fixed;
         top: 0; left: 0;
@@ -141,87 +143,71 @@
     }
     .lyrics-overlay.active { display: flex; }
 
-    .lyrics-scroll {
+    .lyrics-display {
         width: min(94vw, 1400px);
-        min-height: 0;
-        text-align: center;
+        max-height: min(70vh, 760px);
         padding: 0 26px;
-        position: relative;
-        background: transparent;
-        border: none;
-        border-radius: 0;
-        backdrop-filter: none;
-        -webkit-backdrop-filter: none;
-    }
-
-    .okl-single-line {
-        width: 100%;
-        min-height: clamp(72px, 10vh, 130px);
         display: flex;
-        flex-wrap: wrap;
         align-items: center;
         justify-content: center;
-        column-gap: 0.26em;
-        row-gap: 0.08em;
-        opacity: 0;
-        transform: translateY(16px);
-        transition: opacity 0.18s ease, transform 0.18s ease;
-    }
-
-    .okl-single-line.active {
-        opacity: 1;
-        transform: translateY(0);
-    }
-
-    .okl-single-line,
-    .okl-single-line.okl-line-instrumental {
-        font-family: var(--font-display, 'Sora', 'Inter', sans-serif);
-        font-size: clamp(2.2rem, 5.4vw, 5.3rem);
-        font-weight: 800;
-        color: rgba(255,255,255,0.83);
-        line-height: 1.16;
-        padding: 0;
         text-align: center;
-        letter-spacing: -0.018em;
+        font-family: var(--font-display, 'Outfit', sans-serif);
+        font-size: clamp(2rem, 5vw, 4.75rem);
+        font-weight: 800;
+        line-height: 1.12;
+        color: #fff7ef;
         text-shadow:
             0 0 18px rgba(193,95,60,0.6),
             0 0 38px rgba(193,95,60,0.24),
             0 5px 24px rgba(0,0,0,0.56);
     }
 
-    .okl-single-line.okl-line-instrumental {
-        font-style: italic;
-        color: rgba(255,236,206,0.95);
+    .okl-single-line {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: center;
+        gap: 0.22em;
+        opacity: 0;
+        transform: scale(0.96);
+        transition: opacity 220ms ease, transform 220ms ease;
+    }
+
+    .okl-single-line.active {
+        opacity: 1;
+        transform: scale(1);
     }
 
     .okl-word {
         position: relative;
         display: inline-block;
-        color: rgba(255,255,255,0.72);
-        --okl-progress: 0%;
+        white-space: pre;
+        color: rgba(255, 247, 239, 0.34);
+        transition: color 140ms ease;
     }
 
-    .okl-word::before {
+    .okl-word::after {
         content: attr(data-text);
         position: absolute;
-        left: 0;
-        top: 0;
-        color: #fff5e7;
-        text-shadow:
-            0 0 10px rgba(255,213,182,0.7),
-            0 0 28px rgba(255,146,92,0.55);
-        clip-path: inset(0 calc(100% - var(--okl-progress)) 0 0);
+        inset: 0;
+        width: var(--okl-progress, 0%);
+        overflow: hidden;
         white-space: nowrap;
-        pointer-events: none;
+        color: #fff7ef;
+        text-shadow:
+            0 0 12px rgba(255, 193, 150, 0.7),
+            0 0 30px rgba(193,95,60,0.4);
     }
 
+    .okl-word.active,
     .okl-word.past {
-        color: rgba(255,244,236,0.9);
-        --okl-progress: 100%;
+        color: rgba(255, 247, 239, 0.65);
     }
 
-    .okl-word.active {
-        color: #ffffff;
+    .okl-line-instrumental {
+        letter-spacing: 0.06em;
+        color: rgba(255, 236, 221, 0.72);
+        font-style: italic;
     }
 
     #lyricsBtn.active {
@@ -232,13 +218,9 @@
     }
 
     @media (max-width: 900px) {
-        .lyrics-scroll {
+        .lyrics-display {
             width: 94vw;
             padding: 0 14px;
-        }
-        .okl-single-line,
-        .okl-single-line.okl-line-instrumental {
-            font-size: clamp(1.8rem, 8vw, 3.3rem);
         }
     }
 
@@ -256,6 +238,23 @@
         display: none;
     }
     .lyrics-status.visible { display: block; }
+
+    .preview-warning {
+        position: fixed;
+        top: 16px;
+        right: 16px;
+        z-index: 3;
+        max-width: min(420px, calc(100vw - 32px));
+        padding: 10px 14px;
+        border-radius: 16px;
+        border: 1px solid rgba(193,95,60,0.28);
+        background: rgba(24, 20, 16, 0.72);
+        backdrop-filter: blur(14px);
+        color: rgba(255, 240, 229, 0.84);
+        font-size: 0.8rem;
+        line-height: 1.45;
+        box-shadow: 0 12px 32px rgba(0,0,0,0.22);
+    }
 </style>
 {% endblock %}
 
@@ -274,8 +273,17 @@
 
     <!-- Audio Element -->
     <audio id="audioEl" crossorigin="anonymous" preload="auto">
-        <source src="{{ track.file.url }}" type="{{ track.mime_type|default:'audio/mpeg' }}">
+        <source src="{{ track.audio_url }}" type="{{ track.mime_type|default:'audio/mpeg' }}">
     </audio>
+
+    {% if preview_warning %}
+    <div class="preview-warning" id="previewWarning">{{ preview_warning }}</div>
+    {% endif %}
+
+    <div class="lyrics-overlay" id="lyricsOverlay">
+        <div class="lyrics-display" id="lyricsDisplay" aria-live="polite"></div>
+    </div>
+    <div class="lyrics-status" id="lyricsStatus"></div>
 
     <!-- Bottom Bar -->
     <div class="bottom-bar" id="bottomBar">
@@ -305,6 +313,7 @@
             </div>
 
             <div class="controls-right">
+                <button class="ctrl-btn" id="lyricsBtn" title="Lyrics">♪</button>
                 <button class="ctrl-btn" id="panelToggle" title="Customization">🎨</button>
                 <button class="ctrl-btn" id="hideBarBtn" title="Hide controls">⬇</button>
                 <button class="ctrl-btn" id="fullscreenBtn" title="Fullscreen">⛶</button>
@@ -442,7 +451,9 @@
         title: "{{ track.title|escapejs }}",
         artist: "{{ track.artist|escapejs }}",
         duration: {{ track.duration|default:"0" }},
-        url: "{{ track.file.url }}",
+        url: "{{ track.audio_url|escapejs }}",
+        lyricsUrl: "{% url 'visualizer:api_lyrics_lrc' track.id %}",
+        previewOnly: {{ track.preview_only|yesno:"true,false" }},
     };
 </script>
 
@@ -450,7 +461,6 @@
 <script src="https://cdn.jsdelivr.net/npm/butterchurn@2.6.7/lib/butterchurn.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/butterchurn-presets@2.4.7/lib/butterchurnPresets.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/audiomotion-analyzer@4"></script>
-
 <!-- App scripts -->
 <script src="{% static 'js/presets.js' %}"></script>
 <script src="{% static 'js/open-karaoke-lyrics.js' %}"></script>

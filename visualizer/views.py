@@ -1,13 +1,14 @@
 import os
 import json
 import mimetypes
-from django.shortcuts import render, get_object_or_404
-from django.http import JsonResponse
+from django.shortcuts import redirect, render, get_object_or_404
+from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST, require_GET
 
 from .models import Track, Preset
-from .forms import AudioUploadForm
+from .forms import AudioUploadForm, MusicLinkForm
+from .services import LyricsService, RemoteAudioError, RemoteAudioService
 
 
 def index(request):
@@ -22,6 +23,10 @@ def player(request, track_id):
     return render(request, 'visualizer/player.html', {
         'track': track,
         'presets': presets,
+        'preview_warning': (
+            'Preview only: this source exposes a short sample, so playback may stop early.'
+            if track.preview_only else ''
+        ),
     })
 
 
@@ -65,7 +70,50 @@ def api_upload(request):
         'title': track.title,
         'artist': track.artist,
         'duration': track.duration,
-        'url': track.file.url,
+        'url': track.audio_url,
+        'source': track.source,
+        'streamed': False,
+    })
+
+
+@csrf_exempt
+@require_POST
+def api_link(request):
+    """Resolve and ingest a remote music link."""
+    if request.content_type and 'application/json' in request.content_type:
+        try:
+            payload = json.loads(request.body or '{}')
+        except json.JSONDecodeError:
+            payload = {}
+        form = MusicLinkForm(payload)
+    else:
+        form = MusicLinkForm(request.POST)
+
+    if not form.is_valid():
+        return JsonResponse({'error': form.errors['url'][0]}, status=400)
+
+    try:
+        track = RemoteAudioService.ingest(form.cleaned_data['url'])
+    except RemoteAudioError as exc:
+        accepts_json = 'application/json' in request.headers.get('Accept', '')
+        if request.content_type and 'application/json' in request.content_type or accepts_json:
+            return JsonResponse({'error': str(exc)}, status=400)
+        return JsonResponse({'error': str(exc)}, status=400)
+
+    accepts_json = 'application/json' in request.headers.get('Accept', '')
+    wants_json = (request.content_type and 'application/json' in request.content_type) or accepts_json
+    if not wants_json:
+        return redirect('visualizer:player', track_id=track.id)
+
+    return JsonResponse({
+        'id': track.id,
+        'title': track.title,
+        'artist': track.artist,
+        'duration': track.duration,
+        'url': track.audio_url,
+        'source': track.source,
+        'streamed': bool(track.playback_url),
+        'preview_only': track.preview_only,
     })
 
 
@@ -102,32 +150,24 @@ def api_preset_delete(request, preset_id):
 
 @require_GET
 def api_lyrics(request, track_id):
-    """Fetch synced lyrics (LRC) for a track."""
+    """Return lyric availability metadata for a track."""
     track = get_object_or_404(Track, pk=track_id)
-    search_term = f"{track.title} {track.artist}".strip()
+    resolved = LyricsService.get_for_track(track)
+    if not resolved:
+        return JsonResponse({'available': False, 'error': 'No lyrics found'})
+    return JsonResponse({
+        'available': True,
+        'synced': resolved.synced,
+        'provider': resolved.provider,
+        'url': f'/api/lyrics/{track.id}/lrc/',
+    })
 
-    if not search_term:
-        return JsonResponse({'lyrics': None, 'error': 'No track info'})
 
-    # Check if we already have cached lyrics
-    if hasattr(track, 'lyrics_lrc') and track.lyrics_lrc:
-        return JsonResponse({'lyrics': track.lyrics_lrc, 'synced': True})
-
-    try:
-        import syncedlyrics
-        lrc = syncedlyrics.search(search_term, synced_only=True)
-        if lrc:
-            # Cache on the model if the field exists
-            if hasattr(track, 'lyrics_lrc'):
-                track.lyrics_lrc = lrc
-                track.save(update_fields=['lyrics_lrc'])
-            return JsonResponse({'lyrics': lrc, 'synced': True})
-
-        # Fallback: try plain lyrics
-        plain = syncedlyrics.search(search_term, plain_only=True)
-        if plain:
-            return JsonResponse({'lyrics': plain, 'synced': False})
-
-        return JsonResponse({'lyrics': None, 'error': 'No lyrics found'})
-    except Exception as e:
-        return JsonResponse({'lyrics': None, 'error': str(e)})
+@require_GET
+def api_lyrics_lrc(request, track_id):
+    """Return normalized timed LRC for the lyric visualizer."""
+    track = get_object_or_404(Track, pk=track_id)
+    resolved = LyricsService.get_for_track(track)
+    if not resolved or not resolved.lrc:
+        return HttpResponse('No lyrics found', status=404, content_type='text/plain; charset=utf-8')
+    return HttpResponse(resolved.lrc, content_type='text/plain; charset=utf-8')

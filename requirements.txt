@@ -3,6 +3,8 @@ mutagen
 Pillow
 whitenoise
 syncedlyrics
+requests
+yt-dlp
 gunicorn
 dj-database-url
 psycopg2-binary

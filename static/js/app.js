@@ -42,6 +42,10 @@
     const selectedFile = document.getElementById('selectedFile');
     const selectedFileName = document.getElementById('selectedFileName');
     const selectedFileMeta = document.getElementById('selectedFileMeta');
+    const linkForm = document.getElementById('linkForm');
+    const linkInput = document.getElementById('linkInput');
+    const linkSubmit = document.getElementById('linkSubmit');
+    const linkStatus = document.getElementById('linkStatus');
 
     dropZone.addEventListener('click', () => fileInput.click());
     dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
@@ -114,6 +118,46 @@
         };
 
         xhr.send(formData);
+    }
+
+    if (linkForm && linkInput && linkSubmit && linkStatus) {
+        linkForm.addEventListener('submit', async e => {
+            e.preventDefault();
+            const url = linkInput.value.trim();
+            if (!url) return;
+
+            linkStatus.hidden = false;
+            linkStatus.textContent = 'Resolving link...';
+            linkSubmit.disabled = true;
+            linkInput.disabled = true;
+
+            try {
+                const response = await fetch('/api/link/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url }),
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || 'Link import failed');
+                }
+
+                if (data.preview_only) {
+                    linkStatus.textContent = 'Preview only. Opening player...';
+                } else {
+                    linkStatus.textContent = data.streamed
+                        ? 'Link ready. Opening player...'
+                        : 'Audio cached. Opening player...';
+                }
+                window.location.href = '/play/' + data.id + '/';
+            } catch (error) {
+                linkStatus.textContent = error.message || 'Link import failed';
+                showToast(linkStatus.textContent);
+            } finally {
+                linkSubmit.disabled = false;
+                linkInput.disabled = false;
+            }
+        });
     }
 
     // ── Preview Animations ────────────────────────

@@ -1,13 +1,12 @@
 {% extends 'visualizer/base.html' %}
 {% load static %}
 
-{% block title %}MuViz — Transform Music into Visual Art{% endblock %}
+{% block title %}MuViz — Music Visualizer{% endblock %}
 
 {% block body %}
-<!-- Header -->
 <header class="header">
     <div class="logo">
-        <div class="logo-icon">♪</div>
+        <div class="logo-icon">M</div>
         MuViz
     </div>
     <button class="btn-icon" id="themeToggle" title="Toggle dark mode">
@@ -17,39 +16,25 @@
     </button>
 </header>
 
-<!-- Hero -->
 <section class="hero animate-fade-in">
-    <div class="hero-kicker">Local-First Audio Visualizer</div>
-    <h1>Drop a track.<br>Shape the room.</h1>
-    <p>Upload your own audio, jump straight into Milkdrop or spectrum mode, and keep the whole session centered on your file instead of a third-party source.</p>
+    <h1>Play music.<br>See it move.</h1>
+    <p>Upload audio or paste a public link. Then open the visualizer.</p>
 </section>
 
-<!-- Upload Section -->
 <section class="upload-section animate-fade-in-up stagger-1">
     <div class="upload-shell">
         <div class="upload-card upload-card-primary">
-            <div class="upload-badge">Local Files Only</div>
-            <h2 class="upload-title">Built for direct uploads and instant playback</h2>
-            <p class="upload-copy">Drag in a file from your machine and MuViz handles the rest: metadata, playback, live visuals, and lyrics when they are available.</p>
 
             <div class="drop-zone" id="dropZone">
                 <div class="drop-backdrop"></div>
-                <span class="drop-icon">♫</span>
-                <div class="drop-text">Drop your audio file here</div>
-                <div class="drop-subtext">or click to choose a track</div>
+                <span class="drop-icon">♪</span>
+                <div class="drop-text">Drop audio here</div>
+                <div class="drop-subtext">or choose a file</div>
                 <div class="drop-action">
                     <span class="drop-action-pill">Choose File</span>
-                    <span class="drop-action-hint">Uploads start immediately</span>
+                    <span class="drop-action-hint">Max 50 MB</span>
                 </div>
-                <div class="drop-formats">
-                    <span class="format-tag">MP3</span>
-                    <span class="format-tag">WAV</span>
-                    <span class="format-tag">OGG</span>
-                    <span class="format-tag">FLAC</span>
-                    <span class="format-tag">AAC</span>
-                    <span class="format-tag">M4A</span>
-                    <span class="format-tag">WEBM</span>
-                </div>
+                <div class="drop-formats">MP3 WAV FLAC AAC M4A OGG WEBM</div>
                 <input type="file" id="fileInput" accept=".mp3,.wav,.ogg,.flac,.aac,.m4a,.webm" hidden>
             </div>
 
@@ -61,22 +46,25 @@
                 </div>
             </div>
 
-            <div class="upload-highlights">
-                <div class="upload-highlight">
-                    <strong>Fast local flow</strong>
-                    <span>No external source setup, no cookies, no proxy step.</span>
-                </div>
-                <div class="upload-highlight">
-                    <strong>Visualizer-ready</strong>
-                    <span>Jump directly into Milkdrop presets or spectrum mode after upload.</span>
-                </div>
-                <div class="upload-highlight">
-                    <strong>Lyrics supported</strong>
-                    <span>MuViz still tries synced lyrics based on your track metadata.</span>
-                </div>
+            <div class="link-ingest">
+                <form class="link-form" id="linkForm" action="{% url 'visualizer:api_link' %}" method="post">
+                    <label class="link-label" for="linkInput">Link</label>
+                    <div class="link-row">
+                        <input
+                            type="url"
+                            class="link-input"
+                            id="linkInput"
+                            name="url"
+                            placeholder="https://soundcloud.com/... "
+                            required
+                        >
+                        <button class="link-submit" id="linkSubmit" type="submit">Open</button>
+                    </div>
+                    <div class="link-hint">SoundCloud, Internet Archive, direct audio.</div>
+                </form>
+                <div class="link-status" id="linkStatus" hidden>Ready for link import</div>
             </div>
 
-            <!-- Upload Progress -->
             <div class="upload-progress" id="uploadProgress">
                 <div class="spinner"></div>
                 <div class="progress-bar">
@@ -85,51 +73,10 @@
                 <span class="progress-text" id="progressText">Uploading...</span>
             </div>
         </div>
-
-        <div class="upload-side">
-            <div class="support-card">
-                <div class="support-card-label">Recommended</div>
-                <h3>Best results start with clean local audio</h3>
-                <ul class="support-list">
-                    <li>Use MP3, WAV, FLAC, AAC, M4A, OGG, or WEBM.</li>
-                    <li>Tracks up to 50 MB are accepted.</li>
-                    <li>Embedded metadata improves title, artist, and lyric matching.</li>
-                </ul>
-            </div>
-
-            <div class="support-card support-card-accent">
-                <div class="support-card-label">Why Local</div>
-                <h3>A cleaner, more reliable session</h3>
-                <p>Your upload becomes the source of truth for playback, timing, seek controls, and visual analysis, which keeps the experience much more stable.</p>
-            </div>
-        </div>
     </div>
 </section>
 
-<!-- Preview Cards -->
-<section class="preview-section animate-fade-in-up stagger-2">
-    <h3>Visualizer Styles</h3>
-    <div class="preview-grid">
-        <div class="preview-card" data-viz="bars">
-            <canvas id="previewBars"></canvas>
-            <span class="label">Bars</span>
-        </div>
-        <div class="preview-card" data-viz="waveform">
-            <canvas id="previewWave"></canvas>
-            <span class="label">Waveform</span>
-        </div>
-        <div class="preview-card" data-viz="circular">
-            <canvas id="previewCircular"></canvas>
-            <span class="label">Circular</span>
-        </div>
-        <div class="preview-card" data-viz="particles">
-            <canvas id="previewParticles"></canvas>
-            <span class="label">Particles</span>
-        </div>
-    </div>
-</section>
 
-<!-- Toast -->
 <div class="toast" id="toast"></div>
 {% endblock %}
 
