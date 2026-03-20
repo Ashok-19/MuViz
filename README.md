@@ -2,7 +2,8 @@
 
 MuViz is a Django music visualizer app with two playback/visual modes and karaoke-style lyrics.
 
-***Check it out here -> [MuViz](https://muviz.onrender.com/)*** (might experience some delays in loading times because of free tier hosting)
+***Check it out here -> [MuViz](https://muviz.onrender.com/)*** 
+(might experience some delays in loading times because of free tier hosting)
 
 ## Main Features
 
